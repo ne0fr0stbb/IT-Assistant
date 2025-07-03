@@ -164,10 +164,45 @@ class LiveMonitorDialog(QDialog):
         self.manager.stop_all()
         event.accept()
 
+class AboutDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("About I.T Assistant")
+        self.setFixedSize(420, 320)
+        layout = QVBoxLayout()
+        app_name = QLabel("<b>I.T Assistant v1.0</b>")
+        app_name.setStyleSheet("font-size: 20px;")
+        desc = QLabel("A modern network scanner and live device monitor.<br>"
+                      "Features: device discovery, latency/uptime monitoring, speed test, and more.")
+        desc.setWordWrap(True)
+        author = QLabel("Author: Jason Burnham (<a href='mailto:jason.o.burnham@gmail.com'>Contact</a>)")
+        author.setOpenExternalLinks(True)
+        license_ = QLabel("License: MIT")
+        repo = QLabel("<a href='https://github.com/ne0fr0stbb/IT-Assistant'>Project Repository</a>")
+        repo.setOpenExternalLinks(True)
+        copyright_ = QLabel("2025 Jason Burnham")
+        copyright_.setStyleSheet("color: #888; font-size: 11px;")
+        ack = QLabel("Built with PyQt5, pyqtgraph, pysnmp, speedtest-cli")
+        ack.setStyleSheet("font-size: 11px; color: #888;")
+        layout.addWidget(app_name)
+        layout.addWidget(desc)
+        layout.addSpacing(10)
+        layout.addWidget(author)
+        layout.addWidget(license_)
+        layout.addWidget(repo)
+        layout.addSpacing(10)
+        layout.addWidget(ack)
+        layout.addStretch()
+        layout.addWidget(copyright_)
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        btn_box.accepted.connect(self.accept)
+        layout.addWidget(btn_box)
+        self.setLayout(layout)
+
 class NetworkMonitor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('Network Scanner')
+        self.setWindowTitle('I.T Assistant - Network Monitor')
         self.setGeometry(300, 300, 1100, 500)
 
         # Initialize theme state (default to light theme)
@@ -247,6 +282,8 @@ class NetworkMonitor(QMainWindow):
 
         # About menu (placeholder for now)
         about_menu = menu_bar.addMenu('About')
+        about_action = about_menu.addAction('About Network Monitor')
+        about_action.triggered.connect(self.show_about_dialog)
 
         # Initialize checkboxes attribute
         self.checkboxes = []
@@ -293,7 +330,6 @@ class NetworkMonitor(QMainWindow):
                         self.table_widget.setItem(row, column, QTableWidgetItem(data))
 
     def load_data(self):
-        print("Checking IP range input...")
         ip_range = self.ip_input.text().strip()
         if not ip_range:
             default_gateway = get_default_gateway()
@@ -311,11 +347,9 @@ class NetworkMonitor(QMainWindow):
         self.thread.progress.connect(self.update_progress)
         self.thread.device_found.connect(self.add_device_row)
         self.thread.finished.connect(lambda: self.scan_button.setEnabled(True))
-        print("Starting scan thread...")
         self.thread.start()
 
     def update_progress(self, value):
-        print(f"Updating progress: {value}%")
         self.progress_bar.setValue(value)
 
     def add_device_row(self, device):
@@ -384,7 +418,6 @@ class NetworkMonitor(QMainWindow):
             dlg.exec_()
 
     def display_results(self, devices):
-        print("Scan complete. Displaying results...")
         self.progress_bar.setValue(100)
         self.info_label.setText('Scan complete.')
         # Sort devices by response_time descending
@@ -714,6 +747,10 @@ class NetworkMonitor(QMainWindow):
             plot.getAxis('bottom').setTextPen(text_color)
             # Update plot grid
             plot.showGrid(x=True, y=True, alpha=0.3)
+
+    def show_about_dialog(self):
+        dlg = AboutDialog(self)
+        dlg.exec_()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

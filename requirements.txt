@@ -2,3 +2,4 @@ PyQt5>=5.15
 pyqtgraph>=0.13
 pysnmp>=4.4
 speedtest-cli>=2.1
+manuf
