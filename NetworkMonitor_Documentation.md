@@ -1,7 +1,7 @@
 # Network Monitor Program Documentation
 
 ## Overview
-The Network Monitor is a comprehensive PyQt5-based GUI application for network device discovery, monitoring, and analysis. It uses ARP scanning to find active devices on a network and provides real-time monitoring, nmap integration, and internet speed testing capabilities.
+The Network Monitor is a comprehensive CustomTkinter-based GUI application for network device discovery, monitoring, and analysis. It uses ARP scanning to find active devices on a network and provides real-time monitoring, nmap integration, and internet speed testing capabilities.
 
 ## Program Architecture
 
@@ -25,36 +25,36 @@ This is the heart of the application containing the main GUI and application log
 
 ##### `NetworkMonitor` (Main Window Class)
 - **Purpose**: Main application window with device table, scan controls, and menu system
-- **Inheritance**: Inherits from `QMainWindow`
+- **Inheritance**: Inherits from `customtkinter.CTk`
 - **Key Attributes**:
-  - `table_widget`: QTableWidget displaying discovered devices
-  - `scan_button`: Triggers network scanning
-  - `ip_input`: User input for IP range
-  - `search_input`: Filter devices by IP/MAC
+  - `tree`: CTkTreeview displaying discovered devices
+  - `scan_button`: CTkButton triggering network scanning
+  - `ip_input`: CTkEntry for user input of IP range
+  - `search_input`: CTkEntry to filter devices by IP/MAC
   - `all_devices`: Stores all scan results for filtering
-  - `dark_theme`: Boolean for theme state
+  - `live_monitor_window`: Reference to live monitoring window
 
 - **Key Methods**:
   - `load_data()`: Initiates network scan using ScanThread
-  - `add_device_row()`: Adds discovered device to table
+  - `add_device_row()`: Adds discovered device to CTkTreeview
   - `filter_table()`: Filters displayed devices based on search
   - `handle_cell_click()`: Handles web service URL clicks
   - `handle_cell_double_click()`: Opens nmap dialog for IP addresses
-  - `toggle_theme()`: Switches between light/dark themes
-  - `apply_theme()`: Applies comprehensive styling to all UI elements
+  - `open_live_monitor()`: Opens full-screen live monitoring window
+  - `update_monitor_display()`: Callback for live monitor updates
 
 ##### `NmapThread` (Background Nmap Execution)
 - **Purpose**: Runs nmap commands asynchronously without blocking GUI
-- **Inheritance**: Inherits from `QThread`
+- **Inheritance**: Inherits from `threading.Thread`
 - **Key Attributes**:
   - `ip`: Target IP address for scanning
   - `args`: Command line arguments for nmap
-- **Signals**:
-  - `result_ready`: Emitted when nmap scan completes
+  - `callback`: Function to call when scan completes
+- **Communication**: Uses callback mechanism for thread-safe updates
 
 ##### `NmapDialog` (Nmap Interface Dialog)
 - **Purpose**: Provides GUI interface for various nmap scan types
-- **Inheritance**: Inherits from `QDialog`
+- **Inheritance**: Inherits from `customtkinter.CTkToplevel`
 - **Features**: 
   - Quick Scan (-F)
   - OS Detection (-O)  
@@ -64,14 +64,16 @@ This is the heart of the application containing the main GUI and application log
   - Firewall Evasion (-f)
   - Traceroute (--traceroute)
 
-##### `LiveMonitorDialog` (Real-time Monitoring Interface)
-- **Purpose**: Displays real-time ping graphs and device status
-- **Inheritance**: Inherits from `QDialog`
+##### `LiveMonitorWindow` (Real-time Monitoring Interface)
+- **Purpose**: Full-screen window displaying real-time ping graphs and device status
+- **Inheritance**: Inherits from `customtkinter.CTk`
 - **Key Features**:
-  - Individual graphs for each selected device
-  - Real-time latency plotting using pyqtgraph
-  - Status indicators (up/down)
-  - Automatic cleanup when closed
+  - Grid layout for multiple device graphs
+  - Real-time latency plotting using matplotlib
+  - Status indicators (up/down) with color coding
+  - Maximizable interface with control buttons
+  - Adaptive grid sizing based on device count
+  - Thread-safe updates via main window callbacks
 
 ### 2. scanthread.py (Network Scanning Engine)
 
@@ -81,15 +83,16 @@ Handles the core network discovery functionality using ARP scanning.
 
 ##### `ScanThread` (Threaded Network Scanner)
 - **Purpose**: Performs comprehensive network scanning without blocking the GUI
-- **Inheritance**: Inherits from `QThread`
+- **Inheritance**: Inherits from `threading.Thread`
 - **Key Attributes**:
   - `ip_range`: CIDR notation IP range to scan
   - `mac_parser`: manuf.MacParser for manufacturer lookup
+  - `callback`: Function to call with scan results
 
-- **Signals**:
-  - `result_ready`: Emitted when entire scan completes
-  - `progress`: Emitted to update progress bar (0-100%)
-  - `device_found`: Emitted for each discovered device (real-time updates)
+- **Communication**: Uses callback mechanism for thread-safe GUI updates
+  - Real-time device discovery through callbacks
+  - Progress updates via callback mechanism
+  - Final results delivered through callback
 
 - **Key Methods**:
   - `run()`: Main scanning loop using ThreadPoolExecutor for parallel scanning
@@ -103,9 +106,9 @@ Handles the core network discovery functionality using ARP scanning.
 2. `NetworkMonitor.load_data()` creates and starts `ScanThread`
 3. `ScanThread.run()` parses IP range into individual hosts
 4. ThreadPoolExecutor scans up to 32 IPs concurrently
-5. Each completed scan emits `device_found` signal
-6. GUI updates table in real-time as devices are discovered
-7. Final `result_ready` signal indicates scan completion
+5. Each completed scan calls back to GUI with device data
+6. GUI updates CTkTreeview in real-time as devices are discovered
+7. Main window uses `after()` method for thread-safe GUI updates
 
 ### 3. NetworkScanner.py (Basic Scanning Utilities)
 
@@ -132,15 +135,15 @@ Implements continuous device monitoring using ping-based health checks.
 
 ##### `DeviceMonitor` (Individual Device Monitor)
 - **Purpose**: Monitors a single device with continuous ping tests
-- **Inheritance**: Inherits from `QObject`
+- **Inheritance**: Inherits from `threading.Thread`
 - **Key Attributes**:
   - `ip`: Device IP address to monitor
   - `interval`: Ping interval (default 2 seconds)
   - `buffer`: deque storing recent ping results (timestamp, latency, status)
   - `_running`: Thread control flag
+  - `callback`: Function to call with ping updates
 
-- **Signals**:
-  - `update_signal`: Emitted with each ping result
+- **Communication**: Uses callback mechanism for real-time updates
 
 - **Key Methods**:
   - `start()`: Begins monitoring thread
@@ -170,13 +173,14 @@ Provides internet speed testing functionality using the speedtest-cli library.
 
 ##### `SpeedTestThread` (Background Speed Test)
 - **Purpose**: Runs speed test without blocking GUI
-- **Inheritance**: Inherits from `QThread`
-- **Signals**:
-  - `speedtest_results`: Emitted with download/upload/ping results
-  - `speedtest_error`: Emitted on test failure
+- **Inheritance**: Inherits from `threading.Thread`
+- **Communication**: Uses callback mechanism for results
+  - Success callback with download/upload/ping results
+  - Error callback for test failures
 
 ##### `SpeedTestDialog` (Speed Test Interface)
 - **Purpose**: Displays speed test progress and results
+- **Inheritance**: Inherits from `customtkinter.CTkToplevel`
 - **Features**: Shows download speed, upload speed, and ping in Mbps/ms
 
 ### 6. utils.py (Utility Functions)
@@ -205,41 +209,42 @@ Each discovered device is represented as a dictionary containing:
 }
 ```
 
-## Signal/Slot Communication Pattern
+## Callback-based Communication Pattern
 
-The application uses Qt's signal/slot mechanism for thread-safe communication:
+The application uses callback mechanisms for thread-safe communication:
 
 ### Main Scanning Flow:
 ```
-ScanThread.device_found → NetworkMonitor.add_device_row()
-ScanThread.progress → NetworkMonitor.update_progress()  
-ScanThread.result_ready → NetworkMonitor.display_results()
+ScanThread → callback → NetworkMonitor.add_device_row()
+Progress updates → callback → NetworkMonitor.update_progress()  
+Scan completion → callback → NetworkMonitor.scan_complete()
 ```
 
 ### Live Monitoring Flow:
 ```
-DeviceMonitor.update_signal → LiveMonitorManager.device_update
-LiveMonitorManager.device_update → LiveMonitorDialog.update_graph()
+DeviceMonitor → callback → MainWindow.after() → LiveMonitorWindow.update_graph()
+Ping results → main thread → matplotlib graph updates
 ```
 
 ### Nmap Scanning Flow:
 ```
-NmapThread.result_ready → NmapDialog.display_result()
+NmapThread → callback → NmapDialog.display_result()
 ```
 
 ## Threading Architecture
 
 The application uses multiple threading strategies:
 
-1. **QThread for GUI Operations**: ScanThread, NmapThread, SpeedTestThread
+1. **Python threading.Thread**: ScanThread, NmapThread, SpeedTestThread, DeviceMonitor
 2. **ThreadPoolExecutor for Parallel Scanning**: Up to 32 concurrent IP scans
 3. **Daemon Threads for Monitoring**: Background ping monitoring threads
+4. **Main Thread GUI Updates**: All GUI updates via main window's after() method
 
 ## Dependencies and External Libraries
 
 ### Core Dependencies (requirements.txt):
-- **PyQt5 ≥5.15**: GUI framework and threading
-- **pyqtgraph ≥0.13**: Real-time plotting for monitoring graphs
+- **customtkinter ≥5.2**: Modern GUI framework
+- **matplotlib ≥3.5**: Real-time plotting for monitoring graphs
 - **pysnmp ≥4.4**: SNMP functionality (imported but not used in current code)
 - **speedtest-cli ≥2.1**: Internet speed testing
 
@@ -263,24 +268,21 @@ The application uses multiple threading strategies:
 
 The application supports dynamic theming with two modes:
 
-### Light Theme:
-- Clean, minimal design with light backgrounds
-- Blue accent colors for buttons and highlights
-- High contrast for readability
+### CustomTkinter Modern Styling:
+- Clean, professional appearance with built-in CustomTkinter theming
+- Consistent styling across all UI elements
+- Modern button designs with hover effects
+- Clean input fields and dropdown menus
+- Professional table/tree view styling
 
-### Dark Theme:
-- Material Design inspired dark theme
-- Teal/cyan accent colors
-- Reduced eye strain for extended use
-
-Both themes include comprehensive styling for:
-- Main window and dialogs
-- Tables with modern headers and row styling
-- Input fields with focus states
-- Buttons with hover effects
-- Progress bars with gradient fills
-- Checkboxes with custom indicators
-- Scrollbars with modern appearance
+Built-in styling includes:
+- Main window with modern frame styling
+- CTkTreeview with clean row and header styling
+- CTkEntry with focus states
+- CTkButton with hover effects
+- CTkProgressBar with smooth animations
+- CTkCheckBox with modern indicators
+- Consistent color schemes throughout
 
 ## Error Handling
 
@@ -298,23 +300,21 @@ The program starts execution in `NetworkMonitorGUI.py`:
 
 ```python
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = NetworkMonitor()
-    window.show()
-    sys.exit(app.exec_())
+    app = NetworkMonitor()
+    app.mainloop()
 ```
 
-This creates the QApplication, instantiates the main window, displays it, and starts the event loop.
+This creates the CustomTkinter application, instantiates the main window, and starts the event loop.
 
 ## Key Features Summary
 
 1. **Network Discovery**: ARP-based device scanning with manufacturer identification
-2. **Real-time Monitoring**: Continuous ping monitoring with graphical display  
+2. **Real-time Monitoring**: Full-screen monitoring window with grid layout and matplotlib graphs
 3. **Security Scanning**: Integrated nmap functionality with multiple scan types
 4. **Web Service Detection**: Automatic discovery of HTTP/HTTPS services
 5. **Internet Speed Testing**: Built-in speed test functionality
-6. **Modern UI**: Responsive design with light/dark theme support
+6. **Modern UI**: CustomTkinter-based responsive design with professional styling
 7. **Data Export**: CSV import/export for scan results
-8. **Multi-threading**: Non-blocking operations for smooth user experience
+8. **Multi-threading**: Non-blocking operations with callback-based thread safety
 
 This architecture provides a scalable, maintainable foundation for network monitoring and analysis tasks.

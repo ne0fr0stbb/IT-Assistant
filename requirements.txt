@@ -1,5 +1,8 @@
-PyQt5>=5.15
-pyqtgraph>=0.13
+customtkinter>=5.2
+matplotlib>=3.5
 pysnmp>=4.4
 speedtest-cli>=2.1
 manuf
+psutil
+scapy
+ping3

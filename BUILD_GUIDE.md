@@ -52,8 +52,8 @@ console=True,  # Shows console for debugging
 
 ### Essential Dependencies
 ```
-PyQt5>=5.15
-pyqtgraph>=0.13
+customtkinter>=5.2
+matplotlib>=3.5
 pysnmp>=7.0
 speedtest-cli>=2.1
 manuf

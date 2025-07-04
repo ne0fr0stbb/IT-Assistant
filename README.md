@@ -1,9 +1,9 @@
 # Network Monitor 🌐
 
-A comprehensive PyQt5-based GUI application for network device discovery, real-time monitoring, and security analysis. Discover active devices on your network, monitor their health in real-time, and perform security scans with integrated nmap functionality.
+A comprehensive CustomTkinter-based GUI application for network device discovery, real-time monitoring, and security analysis. Discover active devices on your network, monitor their health in real-time, and perform security scans with integrated nmap functionality.
 
 ![Python](https://img.shields.io/badge/python-v3.7+-blue.svg)
-![PyQt5](https://img.shields.io/badge/PyQt5-v5.15+-green.svg)
+![CustomTkinter](https://img.shields.io/badge/CustomTkinter-v5.2+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20|%20Linux%20|%20macOS-lightgrey.svg)
 
@@ -20,10 +20,11 @@ A comprehensive PyQt5-based GUI application for network device discovery, real-t
 
 ### 📊 Real-time Monitoring
 - **Live ping monitoring** with customizable intervals
-- **Interactive graphs** showing latency over time using pyqtgraph
-- **Multi-device monitoring** with individual status tracking
+- **Real-time graphs** showing latency over time using matplotlib
+- **Multi-device monitoring** in maximizable grid layout
 - **Cross-platform ping implementation** (Windows/Linux/macOS)
 - **Historical data buffering** for trend analysis
+- **Full-screen monitoring window** with optimal screen utilization
 
 ### 🔐 Security Analysis
 - **Integrated nmap scanning** with multiple scan types:
@@ -44,11 +45,12 @@ A comprehensive PyQt5-based GUI application for network device discovery, real-t
 
 ### 🎨 Modern User Interface
 - **Responsive design** with sortable, filterable device table
-- **Dual theme support** (Light/Dark) with Material Design inspiration
+- **Modern CustomTkinter styling** with clean, professional appearance
 - **Real-time search and filtering** by IP, MAC, or hostname
 - **Contextual interactions** (click web services, double-click for nmap)
 - **Progress indicators** and status updates
 - **CSV import/export** for data persistence
+- **Live monitoring window** with maximizable full-screen view
 
 ## 🚀 Installation
 
@@ -121,7 +123,7 @@ NetworkMonitor/
 ├── NetworkMonitorGUI.py      # Main application and GUI
 ├── scanthread.py             # Threaded network scanning
 ├── NetworkScanner.py         # Basic ARP scanning utilities
-├── livemonitor.py            # Real-time device monitoring
+├── livemonitor.py            # Real-time device monitoring with matplotlib
 ├── speedtest_dialog.py       # Internet speed testing
 ├── utils.py                  # Utility functions
 ├── requirements.txt          # Python dependencies
@@ -131,10 +133,10 @@ NetworkMonitor/
 ## 🔧 Technical Details
 
 ### Architecture
-- **PyQt5** for modern GUI framework
+- **CustomTkinter** for modern GUI framework
 - **Scapy** for low-level network packet manipulation
 - **Threading** for non-blocking operations
-- **Signal/Slot** pattern for thread-safe communication
+- **Callback-based communication** for thread-safe GUI updates
 
 ### Scanning Technology
 - **ARP requests** for Layer 2 device discovery
@@ -146,14 +148,15 @@ NetworkMonitor/
 - **Cross-platform ping** using subprocess
 - **Regex parsing** for latency extraction
 - **Circular buffering** for efficient memory usage
-- **Real-time plotting** with pyqtgraph
+- **Real-time plotting** with matplotlib
+- **Grid layout optimization** for multiple device monitoring
 
 ## 📋 Requirements
 
 ### Python Dependencies
 ```
-PyQt5>=5.15
-pyqtgraph>=0.13
+customtkinter>=5.2
+matplotlib>=3.5
 pysnmp>=4.4
 speedtest-cli>=2.1
 scapy
@@ -212,8 +215,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - [Scapy](https://scapy.net/) for powerful packet manipulation capabilities
-- [PyQt5](https://riverbankcomputing.com/software/pyqt/) for the excellent GUI framework
-- [pyqtgraph](http://pyqtgraph.org/) for high-performance real-time plotting
+- [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) for the modern GUI framework
+- [Matplotlib](https://matplotlib.org/) for high-quality real-time plotting
 - [nmap](https://nmap.org/) for comprehensive network scanning functionality
 - [manuf](https://github.com/coolbho3k/manuf) for MAC address manufacturer lookup
 
