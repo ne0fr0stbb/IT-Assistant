@@ -5,6 +5,17 @@ A comprehensive network monitoring tool with Material UI themes
 Features: Network scanning, live monitoring, speed test, nmap integration, and more
 """
 
+import sys
+import os
+
+# --- Patch sys.stdout/sys.stderr for frozen GUI apps ---
+if getattr(sys, 'frozen', False):
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w')
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w')
+
+
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -164,7 +175,7 @@ class NetworkScanner:
         try:
             if platform.system().lower() == 'windows':
                 result = subprocess.run(['ping', '-n', '1', '-w', '1000', str(ip)], 
-                                      capture_output=True, text=True, timeout=2)
+                                      capture_output=True, text=True, timeout=2, creationflags=subprocess.CREATE_NO_WINDOW)
             else:
                 result = subprocess.run(['ping', '-c', '1', '-W', '1', str(ip)], 
                                       capture_output=True, text=True, timeout=2)
@@ -259,10 +270,15 @@ class DeviceMonitor:
         """Ping device and return latency and status"""
         param = '-n' if platform.system().lower() == 'windows' else '-c'
         try:
-            output = subprocess.check_output([
-                'ping', param, '1', '-w', '1000', self.ip
-            ], stderr=subprocess.STDOUT, universal_newlines=True)
-            
+            if platform.system().lower() == 'windows':
+                output = subprocess.check_output([
+                    'ping', param, '1', '-w', '1000', self.ip
+                ], stderr=subprocess.STDOUT, universal_newlines=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                output = subprocess.check_output([
+                    'ping', param, '1', '-w', '1000', self.ip
+                ], stderr=subprocess.STDOUT, universal_newlines=True)
+
             if 'unreachable' in output.lower() or 'timed out' in output.lower():
                 return float('nan'), 'down'
             
@@ -946,12 +962,21 @@ class NetworkMonitorApp:
         
         def nmap_thread():
             try:
-                result = subprocess.run(
-                    ['nmap'] + args + [ip], 
-                    capture_output=True, 
-                    text=True, 
-                    timeout=60
-                )
+                if platform.system().lower() == 'windows':
+                    result = subprocess.run(
+                        ['nmap'] + args + [ip],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                else:
+                    result = subprocess.run(
+                        ['nmap'] + args + [ip],
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
                 output = result.stdout or result.stderr
             except subprocess.TimeoutExpired:
                 output = "Nmap scan timed out"

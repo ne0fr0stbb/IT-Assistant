@@ -12,12 +12,12 @@ if exist "build" (
 )
 
 echo.
-echo Starting PyInstaller build...
+echo Starting cx_Freeze build...
 echo This may take several minutes...
 echo.
 
-REM Build with the spec file
-pyinstaller --clean NetworkMonitor.spec
+REM Build with cx_Freeze
+python setup.py build
 
 if %ERRORLEVEL% EQU 0 (
     echo.
@@ -43,7 +43,7 @@ if %ERRORLEVEL% EQU 0 (
     echo Common solutions:
     echo - Make sure all Python dependencies are installed
     echo - Check that all source files are present
-    echo - Try running: pip install --upgrade pyinstaller
+    echo - Try running: pip install --upgrade cx_Freeze
     echo.
 )
 

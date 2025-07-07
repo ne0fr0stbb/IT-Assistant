@@ -8,7 +8,7 @@ build.bat
 
 Or manually:
 ```batch
-pyinstaller --clean NetworkMonitor.spec
+cxfreeze --clean NetworkMonitor.py --target-dir dist
 ```
 
 ## Build Options
@@ -58,13 +58,13 @@ pysnmp>=7.0
 speedtest-cli>=2.1
 manuf
 ping3
-pyinstaller>=6.0
+cx_Freeze>=6.0
 ```
 
 ### Install All Dependencies
 ```batch
 pip install -r requirements.txt
-pip install pyinstaller
+pip install cx_Freeze
 ```
 
 ## Build Process
@@ -77,7 +77,7 @@ pip install pyinstaller
 
 2. **Run Build**
    ```batch
-   pyinstaller --clean NetworkMonitor.spec
+   cxfreeze --clean NetworkMonitor.py --target-dir dist
    ```
 
 3. **Test Executable**
@@ -133,17 +133,17 @@ ERROR: Hidden import 'module' not found
 
 ### Development Build
 ```batch
-pyinstaller --debug --console NetworkMonitorGUI.py
+cxfreeze --debug --console NetworkMonitorGUI.py
 ```
 
 ### Production Build  
 ```batch
-pyinstaller --clean --onefile --noconsole NetworkMonitor.spec
+cxfreeze --clean --onefile --noconsole NetworkMonitor.py
 ```
 
 ### Portable Build
 ```batch
-pyinstaller --clean --onedir NetworkMonitor.spec
+cxfreeze --clean --onedir NetworkMonitor.py
 ```
 
 ## File Structure After Build
