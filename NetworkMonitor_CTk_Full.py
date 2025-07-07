@@ -16,6 +16,7 @@ import psutil
 from datetime import datetime, timedelta
 import json
 import os
+import sys
 import csv
 import webbrowser
 import platform
@@ -30,6 +31,7 @@ import matplotlib.dates as mdates
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import numpy as np
+from PIL import Image
 
 # Try to import advanced modules with fallbacks
 try:
@@ -37,21 +39,21 @@ try:
     SCAPY_AVAILABLE = True
 except ImportError:
     SCAPY_AVAILABLE = False
-    print("Warning: Scapy not available. Using basic ping scanning.")
+    # print("Warning: Scapy not available. Using basic ping scanning.")
 
 try:
     from manuf import manuf
     MANUF_AVAILABLE = True
 except ImportError:
     MANUF_AVAILABLE = False
-    print("Warning: manuf not available. MAC vendor lookup disabled.")
+    # print("Warning: manuf not available. MAC vendor lookup disabled.")
 
 try:
     import speedtest as speedtest_module
     SPEEDTEST_AVAILABLE = True
 except ImportError:
     SPEEDTEST_AVAILABLE = False
-    print("Warning: speedtest-cli not available. Speed test disabled.")
+    # print("Warning: speedtest-cli not available. Speed test disabled.")
 
 # ==================== Utility Classes ====================
 
@@ -416,52 +418,121 @@ class NetworkMonitorApp:
         self.create_status_bar()
     
     def setup_menu(self):
-        """Setup menu bar using tkinter menu"""
-        menubar = tk.Menu(self.root)
-        self.root.configure(menu=menubar)
+        """Setup custom themed menubar using CustomTkinter"""
+        # Create custom menubar frame
+        self.menubar = ctk.CTkFrame(self.root, height=30, corner_radius=0)
+        self.menubar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
+        self.menubar.grid_columnconfigure(0, weight=1)
         
-        # File menu
-        file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Open", command=self.open_file)
-        file_menu.add_command(label="Save Report", command=self.save_report)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.root.quit)
+        # Create menu button frame
+        menu_button_frame = ctk.CTkFrame(self.menubar, fg_color="transparent")
+        menu_button_frame.pack(side="left", padx=5, pady=2)
         
-        # Options menu
-        options_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Options", menu=options_menu)
-        options_menu.add_command(label="Toggle Theme", command=self.toggle_theme)
+        # Get initial colors for current theme
+        current_mode = ctk.get_appearance_mode()
         
-        # About menu
-        about_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="About", menu=about_menu)
-        about_menu.add_command(label="About Network Monitor", command=self.show_about)
+        if current_mode.lower() == "dark":
+            text_color = "#FFFFFF"  # White text for dark theme
+            hover_color = ("gray80", "gray20")
+        else:
+            text_color = "#000000"  # Black text for light theme
+            hover_color = ("gray80", "gray20")
+        
+        # File menu button
+        self.file_menu_btn = ctk.CTkButton(
+            menu_button_frame,
+            text="File",
+            width=60,
+            height=26,
+            fg_color="transparent",
+            text_color=text_color,
+            hover_color=hover_color,
+            command=self.show_file_menu
+        )
+        self.file_menu_btn.pack(side="left", padx=2)
+        
+        # Options menu button
+        self.options_menu_btn = ctk.CTkButton(
+            menu_button_frame,
+            text="Options",
+            width=70,
+            height=26,
+            fg_color="transparent",
+            text_color=text_color,
+            hover_color=hover_color,
+            command=self.show_options_menu
+        )
+        self.options_menu_btn.pack(side="left", padx=2)
+        
+        # About menu button
+        self.about_menu_btn = ctk.CTkButton(
+            menu_button_frame,
+            text="About",
+            width=60,
+            height=26,
+            fg_color="transparent",
+            text_color=text_color,
+            hover_color=hover_color,
+            command=self.show_about_menu
+        )
+        self.about_menu_btn.pack(side="left", padx=2)
+        
+        # Adjust main content grid to account for menubar
+        self.root.grid_rowconfigure(1, weight=1)
     
     def create_sidebar(self):
         """Create sidebar with controls"""
         self.sidebar = ctk.CTkFrame(self.root, width=280, corner_radius=0)
-        self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
-        self.sidebar.grid_rowconfigure(6, weight=1)
-        
+        self.sidebar.grid(row=1, column=0, rowspan=2, sticky="nsew")
+        self.sidebar.grid_rowconfigure(7, weight=1)  # Flexible space after tools
+
+        # Logo
+        try:
+            # Handle frozen application (cx_Freeze)
+            if hasattr(sys, 'frozen') and hasattr(sys, '_MEIPASS'):
+                # PyInstaller frozen app
+                logo_path = os.path.join(sys._MEIPASS, "I.T-Assistant.png")
+            elif hasattr(sys, 'frozen'):
+                # cx_Freeze frozen app
+                logo_path = os.path.join(os.path.dirname(sys.executable), "I.T-Assistant.png")
+            else:
+                # Regular Python script
+                logo_path = os.path.join(os.path.dirname(__file__), "I.T-Assistant.png")
+            logo_image = ctk.CTkImage(
+                light_image=Image.open(logo_path),
+                dark_image=Image.open(logo_path),
+                size=(80, 80)
+            )
+            logo_label = ctk.CTkLabel(
+                self.sidebar,
+                image=logo_image,
+                text=""
+            )
+            logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+        except Exception as e:
+            print(f"Could not load logo: {e}")
+            # Fallback - create empty space
+            logo_label = ctk.CTkLabel(self.sidebar, text="", height=80)
+            logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+
         # Title
         title_label = ctk.CTkLabel(
             self.sidebar, 
             text="I.T Assistant",
             font=ctk.CTkFont(size=24, weight="bold")
         )
-        title_label.grid(row=0, column=0, padx=20, pady=(20, 10))
-        
+        title_label.grid(row=1, column=0, padx=20, pady=(10, 5))
+
         subtitle_label = ctk.CTkLabel(
             self.sidebar, 
             text="Network Monitor",
             font=ctk.CTkFont(size=16)
         )
-        subtitle_label.grid(row=1, column=0, padx=20, pady=(0, 20))
-        
+        subtitle_label.grid(row=2, column=0, padx=20, pady=(0, 20))
+
         # Network settings frame
         network_frame = ctk.CTkFrame(self.sidebar)
-        network_frame.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+        network_frame.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
         network_frame.grid_columnconfigure(0, weight=1)
         
         ctk.CTkLabel(network_frame, text="Network Range:", 
@@ -480,7 +551,7 @@ class NetworkMonitorApp:
         
         # Search frame
         search_frame = ctk.CTkFrame(self.sidebar)
-        search_frame.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
+        search_frame.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
         search_frame.grid_columnconfigure(0, weight=1)
         
         ctk.CTkLabel(search_frame, text="Search Devices:", 
@@ -490,40 +561,47 @@ class NetworkMonitorApp:
         self.search_input.pack(padx=10, pady=(5, 10), fill="x")
         self.search_input.bind("<KeyRelease>", self.filter_devices)
         
-        # Action buttons
-        self.scan_btn = ctk.CTkButton(
-            self.sidebar,
-            text="Start Network Scan",
-            command=self.toggle_scan,
-            height=40,
-            font=ctk.CTkFont(size=14, weight="bold")
-        )
-        self.scan_btn.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
-        
-        self.live_monitor_btn = ctk.CTkButton(
-            self.sidebar,
-            text="Live Monitor Selected",
-            command=self.open_live_monitor,
-            height=40,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            fg_color="#1565c0"
-        )
-        self.live_monitor_btn.grid(row=5, column=0, padx=20, pady=10, sticky="ew")
-        
-        # Tools frame
+        # Expanded Network Tools frame
         tools_frame = ctk.CTkFrame(self.sidebar)
-        tools_frame.grid(row=7, column=0, padx=20, pady=10, sticky="ew")
+        tools_frame.grid(row=5, column=0, padx=20, pady=10, sticky="ew")
         tools_frame.grid_columnconfigure(0, weight=1)
         
         ctk.CTkLabel(tools_frame, text="Network Tools", 
                     font=ctk.CTkFont(size=14, weight="bold")).pack(padx=10, pady=(10, 5))
         
+        # Standard button styling for all tools
+        button_height = 36
+        button_font = ctk.CTkFont(size=13, weight="bold")
+        
+        # Start Network Scan button
+        self.scan_btn = ctk.CTkButton(
+            tools_frame,
+            text="Start Network Scan",
+            command=self.toggle_scan,
+            height=button_height,
+            font=button_font
+        )
+        self.scan_btn.pack(padx=10, pady=5, fill="x")
+        
+        # Live Monitor Selected button
+        self.live_monitor_btn = ctk.CTkButton(
+            tools_frame,
+            text="Live Monitor Selected",
+            command=self.open_live_monitor,
+            height=button_height,
+            font=button_font
+        )
+        self.live_monitor_btn.pack(padx=10, pady=5, fill="x")
+        
+        # Internet Speed Test button
         self.speedtest_btn = ctk.CTkButton(
             tools_frame,
             text="Internet Speed Test",
-            command=self.run_speed_test
+            command=self.run_speed_test,
+            height=button_height,
+            font=button_font
         )
-        self.speedtest_btn.pack(padx=10, pady=5, fill="x")
+        self.speedtest_btn.pack(padx=10, pady=(5, 15), fill="x")
         
         # Theme switch
         self.theme_switch = ctk.CTkSwitch(
@@ -531,13 +609,13 @@ class NetworkMonitorApp:
             text="Dark Mode",
             command=self.change_theme
         )
-        self.theme_switch.grid(row=8, column=0, padx=20, pady=10)
+        self.theme_switch.grid(row=6, column=0, padx=20, pady=10)
         self.theme_switch.select()
     
     def create_main_content(self):
         """Create main content area"""
         self.main_frame = ctk.CTkFrame(self.root)
-        self.main_frame.grid(row=0, column=1, padx=20, pady=20, sticky="nsew")
+        self.main_frame.grid(row=1, column=1, padx=20, pady=20, sticky="nsew")
         self.main_frame.grid_columnconfigure(0, weight=1)
         self.main_frame.grid_rowconfigure(2, weight=1)
         
@@ -587,7 +665,7 @@ class NetworkMonitorApp:
     def create_status_bar(self):
         """Create status bar"""
         self.status_frame = ctk.CTkFrame(self.root, height=30, corner_radius=0)
-        self.status_frame.grid(row=1, column=1, sticky="ew", padx=20, pady=(0, 20))
+        self.status_frame.grid(row=2, column=1, sticky="ew", padx=20, pady=(0, 20))
         
         self.status_label = ctk.CTkLabel(
             self.status_frame,
@@ -878,13 +956,100 @@ class NetworkMonitorApp:
             except subprocess.TimeoutExpired:
                 output = "Nmap scan timed out"
             except FileNotFoundError:
-                output = "Nmap not found. Please install nmap."
+                output = self.get_nmap_installation_message()
             except Exception as e:
                 output = f"Error running nmap: {e}"
             
             self.root.after(0, lambda: self.update_nmap_result(result_widget, output))
         
         threading.Thread(target=nmap_thread, daemon=True).start()
+    
+    def get_nmap_installation_message(self):
+        """Get detailed nmap installation instructions"""
+        os_name = platform.system().lower()
+        
+        if os_name == "windows":
+            return """NMAP NOT FOUND - Installation Required
+
+Nmap is not installed on your system. To use network scanning features, please install Nmap:
+
+📋 INSTALLATION INSTRUCTIONS FOR WINDOWS:
+
+1. Visit the official Nmap website:
+   https://nmap.org/download.html
+
+2. Download the Windows installer:
+   - Look for "Latest stable release self-installer"
+   - Download the .exe file (usually named nmap-X.XX-setup.exe)
+
+3. Install Nmap:
+   - Run the downloaded .exe file as Administrator
+   - Follow the installation wizard
+   - Make sure to check "Add Nmap to PATH" during installation
+
+4. Restart the application:
+   - Close this Network Monitor application
+   - Restart it after Nmap installation completes
+
+💡 ALTERNATIVE INSTALLATION METHODS:
+
+• Using Chocolatey (if installed):
+  choco install nmap
+
+• Using Windows Package Manager:
+  winget install Insecure.Nmap
+
+⚠️  IMPORTANT NOTES:
+- Nmap requires administrator privileges for some scan types
+- Windows Defender or antivirus may flag Nmap (this is normal)
+- Add Nmap to your antivirus whitelist if needed
+
+🔄 After installation, try the scan again."""
+        
+        elif os_name == "darwin":  # macOS
+            return """NMAP NOT FOUND - Installation Required
+
+Nmap is not installed on your system. To use network scanning features, please install Nmap:
+
+📋 INSTALLATION INSTRUCTIONS FOR macOS:
+
+1. Using Homebrew (Recommended):
+   brew install nmap
+
+2. Using MacPorts:
+   sudo port install nmap
+
+3. Manual Installation:
+   - Visit: https://nmap.org/download.html
+   - Download the macOS installer (.dmg file)
+   - Run the installer and follow instructions
+
+4. Restart the application after installation.
+
+🔄 After installation, try the scan again."""
+        
+        else:  # Linux and others
+            return """NMAP NOT FOUND - Installation Required
+
+Nmap is not installed on your system. To use network scanning features, please install Nmap:
+
+📋 INSTALLATION INSTRUCTIONS FOR LINUX:
+
+• Ubuntu/Debian:
+  sudo apt update
+  sudo apt install nmap
+
+• CentOS/RHEL/Fedora:
+  sudo yum install nmap     (or: sudo dnf install nmap)
+
+• Arch Linux:
+  sudo pacman -S nmap
+
+• From source:
+  Visit https://nmap.org/download.html
+
+🔄 After installation, try the scan again."""
+    
     
     def update_nmap_result(self, widget, result):
         """Update nmap result display"""
@@ -1300,9 +1465,13 @@ Status: {device.get('status', 'Unknown')}
                     )
                 
                 # Format x-axis for time display
-                ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-                ax.xaxis.set_major_locator(mdates.SecondLocator(interval=10))
+                # ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+                # ax.xaxis.set_major_locator(mdates.SecondLocator(interval=10))
                 
+                # Hide x-axis labels and ticks to remove timestamps
+                ax.set_xticks([])
+                ax.set_xticklabels([])
+
             # Set y-axis limits
             valid_latencies = [l for l in latencies if l is not None]
             if valid_latencies:
@@ -1418,6 +1587,7 @@ Status: {device.get('status', 'Unknown')}
         speed_window.title("Internet Speed Test")
         speed_window.geometry("450x350")
         speed_window.transient(self.root)
+        speed_window.grab_set()  # Make modal
         
         # Status label
         status_label = ctk.CTkLabel(
@@ -1425,7 +1595,7 @@ Status: {device.get('status', 'Unknown')}
             text="Initializing speed test...",
             font=ctk.CTkFont(size=16, weight="bold")
         )
-        status_label.pack(pady=20)
+        status_label.pack(pady=20, padx=20, fill="x")
         
         # Progress bar
         progress_bar = ctk.CTkProgressBar(speed_window)
@@ -1433,55 +1603,97 @@ Status: {device.get('status', 'Unknown')}
         progress_bar.set(0)
         
         # Results label
-        results_label = ctk.CTkLabel(speed_window, text="")
-        results_label.pack(pady=10, padx=20)
+        results_label = ctk.CTkLabel(speed_window, text="", justify=ctk.LEFT)
+        results_label.pack(pady=10, padx=20, fill="x")
         
-        # Buttons
+        # --- Button Frame ---
         button_frame = ctk.CTkFrame(speed_window)
-        button_frame.pack(pady=10, fill="x")
+        button_frame.pack(pady=20, padx=20, fill="x")
         
-        cancel_btn = ctk.CTkButton(button_frame, text="Cancel")
-        cancel_btn.pack(side="left", padx=20)
+        # Center buttons using a nested frame
+        center_frame = ctk.CTkFrame(button_frame)
+        center_frame.pack(expand=True)
         
-        close_btn = ctk.CTkButton(button_frame, text="Close", command=speed_window.destroy)
-        close_btn.pack(side="right", padx=20)
-        close_btn.configure(state="disabled")
+        action_button = ctk.CTkButton(center_frame, text="Cancel")
+        action_button.pack(side="left", padx=10)
         
-        # Create speed test runner
+        close_button = ctk.CTkButton(center_frame, text="Close", command=speed_window.destroy)
+        close_button.pack(side="left", padx=10)
+        close_button.configure(state="disabled")
+        
+        # --- Speed Test Logic ---
+        speed_test_runner = None
+        test_thread = None
+        test_completed = False
+
+        def start_test():
+            nonlocal speed_test_runner, test_thread, test_completed
+            test_completed = False
+            
+            # Reset UI
+            status_label.configure(text="Initializing speed test...")
+            progress_bar.set(0)
+            results_label.configure(text="")
+            action_button.configure(text="Cancel", state="normal")
+            close_button.configure(state="disabled")
+            
+            # Create and start a new test runner
+            speed_test_runner = SpeedTestRunner(
+                progress_callback=on_progress,
+                status_callback=on_status,
+                result_callback=on_result,
+                error_callback=on_error
+            )
+            
+            def cancel_test():
+                speed_test_runner.cancel()
+                action_button.configure(text="Retry", command=start_test)
+                close_button.configure(state="normal")
+                status_label.configure(text="Speed test cancelled")
+                progress_bar.set(0)
+            
+            action_button.configure(command=cancel_test)
+            
+            test_thread = threading.Thread(target=speed_test_runner.run_test, daemon=True)
+            test_thread.start()
+
         def on_progress(value):
             progress_bar.set(value / 100)
-        
+
         def on_status(status):
             status_label.configure(text=status)
-        
+
         def on_result(result):
+            nonlocal test_completed
+            test_completed = True
+            
             server_info = ""
             if 'server' in result and result['server']:
                 server = result['server']
-                server_info = f"\\nServer: {server.get('sponsor', 'Unknown')} ({server.get('name', 'Unknown')})"
+                server_info = f"\nServer: {server.get('sponsor', 'Unknown')} ({server.get('name', 'Unknown')})"
             
-            results_text = (f"Download: {result['download']:.2f} Mbps\\n"
-                          f"Upload: {result['upload']:.2f} Mbps\\n"
+            results_text = (f"Download: {result['download']:.2f} Mbps\n"
+                          f"Upload: {result['upload']:.2f} Mbps\n"
                           f"Ping: {result['ping']:.2f} ms{server_info}")
             
             results_label.configure(text=results_text)
             status_label.configure(text="Speed test completed!")
-            cancel_btn.configure(state="disabled")
-            close_btn.configure(state="normal")
-        
+            
+            action_button.configure(text="Retry", command=start_test)
+            close_button.configure(state="normal")
+
         def on_error(error):
+            nonlocal test_completed
+            test_completed = True
+
             results_label.configure(text=f"Error: {error}")
             status_label.configure(text="Speed test failed")
-            cancel_btn.configure(state="disabled")
-            close_btn.configure(state="normal")
-        
-        speed_test = SpeedTestRunner(on_progress, on_status, on_result, on_error)
-        
-        cancel_btn.configure(command=speed_test.cancel)
-        
-        # Start test
-        test_thread = threading.Thread(target=speed_test.run_test, daemon=True)
-        test_thread.start()
+            
+            action_button.configure(text="Retry", command=start_test)
+            close_button.configure(state="normal")
+
+        # --- Start the first test ---
+        start_test()
     
     def save_report(self):
         """Save scan results to CSV"""
@@ -1554,17 +1766,17 @@ Status: {device.get('status', 'Unknown')}
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to open file: {e}")
     
-    def toggle_theme(self):
-        """Toggle between light and dark themes"""
-        current_mode = ctk.get_appearance_mode()
-        new_mode = "light" if current_mode == "dark" else "dark"
-        ctk.set_appearance_mode(new_mode)
-        
-        # Update switch
-        if new_mode == "dark":
-            self.theme_switch.select()
-        else:
+    
+    def toggle_theme_via_switch(self):
+        """Toggle theme by programmatically triggering the theme switch"""
+        # Toggle the switch state, which will automatically call change_theme()
+        if self.theme_switch.get():
             self.theme_switch.deselect()
+        else:
+            self.theme_switch.select()
+        
+        # Manually trigger the change_theme method since deselect/select might not always trigger it
+        self.change_theme()
     
     def change_theme(self):
         """Change theme based on switch"""
@@ -1572,6 +1784,66 @@ Status: {device.get('status', 'Unknown')}
             ctk.set_appearance_mode("dark")
         else:
             ctk.set_appearance_mode("light")
+        
+        # Update menubar button colors after theme change
+        self.root.after(50, self.update_menubar_colors)
+    
+    def update_menubar_colors(self):
+        """Update menubar button text colors to match current theme"""
+        current_mode = ctk.get_appearance_mode()
+        
+        # Set text colors based on theme
+        if current_mode.lower() == "dark":
+            text_color = "#FFFFFF"  # Explicit white hex
+            hover_color = ("gray80", "gray20")
+        else:
+            text_color = "#000000"  # Explicit black hex
+            hover_color = ("gray80", "gray20")
+        
+        # Update all menubar button colors
+        try:
+            self.file_menu_btn.configure(fg_color="transparent", text_color=text_color, hover_color=hover_color)
+            self.options_menu_btn.configure(fg_color="transparent", text_color=text_color, hover_color=hover_color)
+            self.about_menu_btn.configure(fg_color="transparent", text_color=text_color, hover_color=hover_color)
+            print(f"Menubar text colors updated to {text_color} for {current_mode} theme")
+        except Exception as e:
+            print(f"Error updating menubar button colors: {e}")
+    
+    def show_file_menu(self):
+        """Show file menu dropdown"""
+        # Create dropdown menu
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Open", command=self.open_file)
+        menu.add_command(label="Save Report", command=self.save_report)
+        menu.add_separator()
+        menu.add_command(label="Exit", command=self.root.quit)
+        
+        # Position menu below button
+        x = self.file_menu_btn.winfo_rootx()
+        y = self.file_menu_btn.winfo_rooty() + self.file_menu_btn.winfo_height()
+        menu.post(x, y)
+    
+    def show_options_menu(self):
+        """Show options menu dropdown"""
+        # Create dropdown menu
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Toggle Theme", command=self.toggle_theme_via_switch)
+        
+        # Position menu below button
+        x = self.options_menu_btn.winfo_rootx()
+        y = self.options_menu_btn.winfo_rooty() + self.options_menu_btn.winfo_height()
+        menu.post(x, y)
+    
+    def show_about_menu(self):
+        """Show about menu dropdown"""
+        # Create dropdown menu
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="About Network Monitor", command=self.show_about)
+        
+        # Position menu below button
+        x = self.about_menu_btn.winfo_rootx()
+        y = self.about_menu_btn.winfo_rooty() + self.about_menu_btn.winfo_height()
+        menu.post(x, y)
     
     def show_about(self):
         """Show about dialog"""
