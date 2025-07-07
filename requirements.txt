@@ -6,3 +6,4 @@ manuf
 psutil
 scapy
 ping3
+nmap

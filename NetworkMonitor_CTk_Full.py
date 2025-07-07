@@ -1113,211 +1113,130 @@ Status: {device.get('status', 'Unknown')}
             messagebox.showwarning("No Devices", "Please select at least one device to monitor.")
             return
         
-        # Create a new full CTk window instead of a dialog
         monitor_window = ctk.CTk()
         monitor_window.title("Live Device Monitoring - Real-time Graphs")
         
-        # Calculate optimal window size based on device count and screen size
         device_count = len(self.selected_devices)
         screen_width = monitor_window.winfo_screenwidth()
         screen_height = monitor_window.winfo_screenheight()
         
-        # Calculate window dimensions
-        # Dynamic height calculation based on device count and screen size
         max_height = int(screen_height * 0.9)
-        
-        # Calculate optimal height per device based on available space
-        available_height = max_height - 150  # Reserve space for controls and padding
-        optimal_height_per_device = min(350, available_height // device_count)  # Max 350px per device
-        
-        # Ensure minimum height per device (but allow scrolling if too many devices)
+        available_height = max_height - 150
+        optimal_height_per_device = min(350, available_height // device_count)
         min_height_per_device = 200
         if optimal_height_per_device < min_height_per_device:
-            # Too many devices - use minimum height and allow some scrolling
             height_per_device = min_height_per_device
             window_height = max_height
         else:
-            # All devices can fit comfortably
             height_per_device = optimal_height_per_device
             window_height = (device_count * height_per_device) + 150
         
-        # Width calculation (responsive to screen size)
-        if screen_width >= 1920:  # Large screens
+        if screen_width >= 1920:
             window_width = 1400
         elif screen_width >= 1600:
             window_width = 1200
         elif screen_width >= 1366:
             window_width = 1000
-        else:  # Smaller screens
+        else:
             window_width = min(screen_width - 100, 900)
         
-        # Center the window on screen
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
-        
         monitor_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        
-        # Add maximize button functionality
-        monitor_window.state('normal')  # Start in normal state
-        
-        # Configure matplotlib style for dark theme
+        monitor_window.state('normal')
         plt.style.use('dark_background')
         
-        # Calculate grid layout (columns x rows)
-        # Determine optimal grid based on screen width and device count
-        print(f"Screen width detected: {screen_width}px")
-        
-        if screen_width >= 1920:  # Large screens
-            max_cols = min(3, device_count)  # Up to 3 columns
-        elif screen_width >= 1400:  # Medium-large screens
-            max_cols = min(2, device_count)  # Up to 2 columns
-        elif screen_width >= 1024:  # Medium screens
-            max_cols = min(2, device_count)  # Up to 2 columns for medium screens
+        if screen_width >= 1920:
+            max_cols = min(3, device_count)
+        elif screen_width >= 1400:
+            max_cols = min(2, device_count)
+        elif screen_width >= 1024:
+            max_cols = min(2, device_count)
         else:
-            max_cols = 1  # Single column for smaller screens
-        
-        print(f"Max columns calculated: {max_cols} for {device_count} devices")
-        
+            max_cols = 1
         cols = min(max_cols, device_count)
-        rows = (device_count + cols - 1) // cols  # Ceiling division
-        
-        # Recalculate window size for grid layout
-        # Adjust width for multiple columns - make it wider to accommodate side-by-side graphs
-        min_graph_width = 600 if cols == 1 else 500  # Smaller width for multi-column
+        rows = (device_count + cols - 1) // cols
+        min_graph_width = 600 if cols == 1 else 500
         window_width = min(screen_width - 50, cols * min_graph_width + 60)
-        
-        # Calculate optimal height per row based on available space and device count
-        # Reserve more space for controls to ensure they're always visible
-        available_height_for_graphs = max_height - 180  # More space for controls
-        
+        available_height_for_graphs = max_height - 180
         if device_count <= 4:
-            # For 4 or fewer devices, use generous space
-            min_graph_height = 350  # Reduced from 400 for 1080p compatibility
+            min_graph_height = 350
         elif device_count <= 6:
-            # For 5-6 devices, use medium space
-            min_graph_height = 240  # Reduced for better fit
+            min_graph_height = 240
         elif device_count <= 8:
-            # For 7-8 devices, use compact space
-            min_graph_height = 200  # Compact for more devices
+            min_graph_height = 200
         elif device_count <= 12:
-            # For 9-12 devices, use very compact space
-            min_graph_height = 180  # Very compact
+            min_graph_height = 180
         else:
-            # For many devices, use minimal space
-            min_graph_height = 160  # Minimal space
-        
-        # Calculate required height and ensure it fits
-        required_height = rows * min_graph_height + 150  # Reduced from 200
-        
+            min_graph_height = 160
+        required_height = rows * min_graph_height + 150
         if required_height > max_height:
-            # If still too tall, reduce graph height further
-            min_graph_height = max(160, (available_height_for_graphs // rows))  # Allow even smaller graphs
+            min_graph_height = max(160, (available_height_for_graphs // rows))
             window_height = max_height
-            print(f"Adjusted graph height to {min_graph_height}px to fit {rows} rows")
         else:
             window_height = required_height
-        
-        # Debug info
-        print(f"Grid Layout: {cols} cols x {rows} rows, Window: {window_width}x{window_height}")
-        print(f"Graph height per row: {min_graph_height}px, Total devices: {device_count}")
-        
-        # Re-center with new dimensions
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         monitor_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
         
-        # Control buttons frame - create first to reserve space at bottom
         control_frame = ctk.CTkFrame(monitor_window, height=80)
         control_frame.pack(side="bottom", fill="x", padx=10, pady=10)
-        control_frame.pack_propagate(False)  # Prevent frame from resizing based on contents
-        
-        # Create main container frame - now it will respect the space taken by controls
+        control_frame.pack_propagate(False)
+
         main_frame = ctk.CTkFrame(monitor_window)
         main_frame.pack(fill="both", expand=True, padx=10, pady=(10, 0))
-        
-        # Create column frames for side-by-side layout
+        main_frame.pack_propagate(False)
+
         column_frames = []
         if cols > 1:
-            # Create horizontal container for columns
             columns_container = ctk.CTkFrame(main_frame)
             columns_container.pack(fill="both", expand=True, padx=5, pady=5)
-            
+            columns_container.pack_propagate(False)
             for col in range(cols):
                 col_frame = ctk.CTkFrame(columns_container)
                 col_frame.pack(side="left", fill="both", expand=True, padx=5)
+                col_frame.pack_propagate(False)
                 column_frames.append(col_frame)
         else:
-            # Single column - use main frame directly
             column_frames.append(main_frame)
         
-        # Debug output
-        print(f"Device count: {device_count}, Grid: {cols}x{rows}")
-        print(f"Window size: {window_width}x{window_height}")
-        
-        # Store monitor window reference for callbacks
         self.current_monitor_window = monitor_window
         self.monitor_graphs = {}
         
-        # Create monitoring displays for each device in grid layout
         for i, device in enumerate(self.selected_devices):
-            # Calculate grid position
             row = i // cols
             col = i % cols
             ip = device['ip']
-            
-            # Use the appropriate column frame
             target_frame = column_frames[col % len(column_frames)]
-            
             device_frame = ctk.CTkFrame(target_frame)
-            # Reduce padding for many devices
             padding_y = 5 if device_count > 6 else 8 if device_count > 4 else 10
             padding_x = 5 if device_count > 6 else 8 if device_count > 4 else 10
             device_frame.pack(pady=padding_y, padx=padding_x, fill="both", expand=True)
-            
-            # Debug: print grid position
-            print(f"Device {ip}: Using column {col}, frame index {col % len(column_frames)}")
-            
-            # Device info header (smaller font to save space)
+            device_frame.pack_propagate(False)
             info_label = ctk.CTkLabel(
                 device_frame,
                 text=f"Monitoring: {ip} ({device.get('hostname', 'Unknown')}) - {device.get('manufacturer', 'Unknown')}",
                 font=ctk.CTkFont(size=12, weight="bold")
             )
             info_label.pack(pady=5)
-            
-            # Calculate optimal graph size based on grid layout
-            # Width: divide available width by number of columns
-            available_width = window_width - (cols * 40)  # Account for padding
+            available_width = window_width - (cols * 40)
             graph_width_pixels = available_width // cols
-            graph_width = max(4, min(10, graph_width_pixels / 100))  # Convert to inches
-            
-            # Height: use the calculated min_graph_height from window sizing
-            # Convert the adjusted min_graph_height from pixels to inches
-            graph_height = max(2.0, min(6, (min_graph_height - 80) / 80))  # Convert to inches, reserve 80px for labels
-            
-            # Create figure and canvas for real-time graph
+            graph_width = max(4, min(10, graph_width_pixels / 100))
+            graph_height = max(2.0, min(6, (min_graph_height - 80) / 80))
             fig = Figure(figsize=(graph_width, graph_height), facecolor='#2b2b2b')
             ax = fig.add_subplot(111)
-            
-            # Style the plot
             ax.set_facecolor('#1e1e1e')
             ax.grid(True, alpha=0.3, color='#444444')
             ax.set_xlabel('Time', color='white')
             ax.set_ylabel('Latency (ms)', color='white')
             ax.set_title(f'Real-time Latency for {ip}', color='white', fontsize=14, fontweight='bold')
             ax.tick_params(colors='white')
-            
-            # Initialize empty plot
             line, = ax.plot([], [], 'g-', linewidth=2, label='Latency')
             ax.legend()
-            
-            # Create canvas with reduced padding for more devices
             canvas = FigureCanvasTkAgg(fig, device_frame)
             canvas_padding_y = 5 if device_count > 6 else 8 if device_count > 4 else 10
             canvas_padding_x = 5 if device_count > 6 else 8 if device_count > 4 else 10
             canvas.get_tk_widget().pack(pady=canvas_padding_y, padx=canvas_padding_x, fill="both", expand=True)
-            
-            # Store references
             self.monitor_graphs[ip] = {
                 'figure': fig,
                 'axis': ax,
@@ -1327,41 +1246,29 @@ Status: {device.get('status', 'Unknown')}
                 'latencies': [],
                 'status_line': None
             }
-            
-            # Status indicators frame
             status_frame = ctk.CTkFrame(device_frame)
             status_frame.pack(pady=(0, 10), padx=10, fill="x")
-            
-            # Current status
             status_label = ctk.CTkLabel(
                 status_frame,
                 text="Status: Initializing...",
                 font=ctk.CTkFont(size=12)
             )
             status_label.pack(side="left", padx=10, pady=5)
-            
-            # Statistics
             stats_label = ctk.CTkLabel(
                 status_frame,
                 text="Avg: --ms | Min: --ms | Max: --ms | Loss: --%",
                 font=ctk.CTkFont(size=12)
             )
             stats_label.pack(side="right", padx=10, pady=5)
-            
             self.monitor_graphs[ip]['status_label'] = status_label
             self.monitor_graphs[ip]['stats_label'] = stats_label
-            
-            # Start monitoring
             if ip not in self.device_monitors:
-                monitor = DeviceMonitor(ip, interval=1)  # Faster updates for graphs
+                monitor = DeviceMonitor(ip, interval=1)
                 monitor.start(
                     update_callback=self.update_graph_status,
                     graph_callback=self.update_monitor_graph
                 )
                 self.device_monitors[ip] = monitor
-        
-        
-        # Pause/Resume button
         self.monitor_paused = False
         pause_btn = ctk.CTkButton(
             control_frame,
@@ -1369,16 +1276,12 @@ Status: {device.get('status', 'Unknown')}
             command=lambda: self.toggle_monitoring_pause(pause_btn)
         )
         pause_btn.pack(side="left", padx=10)
-        
-        # Export data button
         export_btn = ctk.CTkButton(
             control_frame,
             text="Export Data",
             command=self.export_monitoring_data
         )
         export_btn.pack(side="left", padx=10)
-        
-        # Maximize/Restore button
         self.is_maximized = False
         maximize_btn = ctk.CTkButton(
             control_frame,
@@ -1386,174 +1289,55 @@ Status: {device.get('status', 'Unknown')}
             command=lambda: self.toggle_maximize(monitor_window, maximize_btn)
         )
         maximize_btn.pack(side="right", padx=10)
-        
-        # Close handler
         def on_close():
             for monitor in self.device_monitors.values():
                 monitor.stop()
             self.device_monitors.clear()
             self.monitor_graphs.clear()
-            # Clear monitor window reference
             if hasattr(self, 'current_monitor_window'):
                 self.current_monitor_window = None
-            plt.close('all')  # Clean up matplotlib figures
+            plt.close('all')
             monitor_window.destroy()
-        
         monitor_window.protocol("WM_DELETE_WINDOW", on_close)
-    
-    def update_monitor_display(self, ip, text_widget):
-        """Update monitoring display"""
-        def update(ip, latency, status, timestamp):
-            dt = datetime.fromtimestamp(timestamp)
-            line = f"[{dt.strftime('%H:%M:%S')}] {ip}: {status} - {latency:.1f}ms\n"
-            
-            text_widget.insert("end", line)
-            text_widget.see("end")
-            
-            # Limit lines
-            lines = text_widget.get("1.0", "end").split('\n')
-            if len(lines) > 50:
-                text_widget.delete("1.0", "2.0")
-        
-        return update
-    
-    def update_graph_status(self, ip, latency, status, timestamp):
-        """Update graph status (callback for DeviceMonitor)"""
-        # Schedule GUI update on main thread using the main window (which has active mainloop)
-        self.root.after(0, self._update_graph_status_gui, ip, latency, status, timestamp)
-    
-    def _update_graph_status_gui(self, ip, latency, status, timestamp):
-        """Update graph status on main thread"""
-        if ip in self.monitor_graphs:
-            graph_data = self.monitor_graphs[ip]
-            
-            # Update status label
-            status_text = "Online" if status == 'up' else "Offline"
-            color = "green" if status == 'up' else "red"
-            graph_data['status_label'].configure(
-                text=f"Status: {status_text}",
-                text_color=color
-            )
-    
-    def update_monitor_graph(self, ip, buffer_data):
-        """Update monitoring graph with latest data"""
-        # Schedule GUI update on main thread using the main window (which has active mainloop)
-        self.root.after(0, self._update_monitor_graph_gui, ip, buffer_data)
-    
-    def _update_monitor_graph_gui(self, ip, buffer_data):
-        """Update monitoring graph on main thread"""
-        if self.monitor_paused or ip not in self.monitor_graphs:
-            return
-        
-        graph_data = self.monitor_graphs[ip]
-        
-        # Extract data from buffer
-        times = []
-        latencies = []
-        
-        current_time = time.time()
-        
-        for timestamp, latency, status in buffer_data:
-            # Only show last 60 seconds
-            if current_time - timestamp <= 60:
-                times.append(datetime.fromtimestamp(timestamp))
-                if not math.isnan(latency) and status == 'up':
-                    latencies.append(latency)
-                else:
-                    latencies.append(None)  # For gaps in data when offline
-        
-        if not times:
-            return
-        
-        try:
-            # Update plot data
-            graph_data['line'].set_data(times, latencies)
-            
-            # Adjust axis limits
-            ax = graph_data['axis']
-            if times:
-                if len(times) == 1:
-                    # For single data point, create a 60-second window
-                    center_time = times[0]
-                    time_window = 30  # seconds
-                    ax.set_xlim(
-                        center_time - timedelta(seconds=time_window),
-                        center_time + timedelta(seconds=time_window)
-                    )
-                else:
-                    # For multiple points, use actual range with small padding
-                    time_range = max(times) - min(times)
-                    padding = max(time_range.total_seconds() * 0.05, 5)  # 5% padding or 5 seconds minimum
-                    ax.set_xlim(
-                        min(times) - timedelta(seconds=padding),
-                        max(times) + timedelta(seconds=padding)
-                    )
-                
-                # Format x-axis for time display
-                # ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-                # ax.xaxis.set_major_locator(mdates.SecondLocator(interval=10))
-                
-                # Hide x-axis labels and ticks to remove timestamps
-                ax.set_xticks([])
-                ax.set_xticklabels([])
 
-            # Set y-axis limits
-            valid_latencies = [l for l in latencies if l is not None]
-            if valid_latencies:
-                max_latency = max(valid_latencies)
-                ax.set_ylim(0, max(max_latency * 1.2, 10))
-            
-            # Update statistics
-            if valid_latencies:
-                avg_latency = sum(valid_latencies) / len(valid_latencies)
-                min_latency = min(valid_latencies)
-                max_latency = max(valid_latencies)
-                loss_percent = ((len(latencies) - len(valid_latencies)) / len(latencies)) * 100 if latencies else 0
-                
-                stats_text = f"Avg: {avg_latency:.1f}ms | Min: {min_latency:.1f}ms | Max: {max_latency:.1f}ms | Loss: {loss_percent:.1f}%"
-                graph_data['stats_label'].configure(text=stats_text)
-            
-            # Redraw canvas
-            graph_data['canvas'].draw_idle()  # Use draw_idle() for better performance
-            
-        except Exception as e:
-            print(f"Error updating graph for {ip}: {e}")
-    
-    def toggle_monitoring_pause(self, button):
-        """Toggle monitoring pause state"""
-        self.monitor_paused = not self.monitor_paused
-        if self.monitor_paused:
-            button.configure(text="Resume Monitoring")
-        else:
-            button.configure(text="Pause Monitoring")
-    
     def toggle_maximize(self, window, button):
-        """Toggle maximize/restore window state"""
+        """Toggle maximize/restore window state and ensure uniform fill"""
         try:
             if not self.is_maximized:
-                # Maximize window
-                window.state('zoomed')  # Windows maximized state
+                window.state('zoomed')
                 button.configure(text="Restore")
                 self.is_maximized = True
             else:
-                # Restore window
                 window.state('normal')
                 button.configure(text="Maximize")
                 self.is_maximized = False
+            window.update_idletasks()
+            # Ensure all frames fill available space
+            if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
+                for child in self.current_monitor_window.winfo_children():
+                    try:
+                        child.pack_configure(fill="both", expand=True)
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"Error toggling maximize: {e}")
-            # Fallback for different platforms
             try:
                 if not self.is_maximized:
-                    window.attributes('-zoomed', True)  # Linux/Unix
+                    window.attributes('-zoomed', True)
                     button.configure(text="Restore")
                     self.is_maximized = True
                 else:
                     window.attributes('-zoomed', False)
                     button.configure(text="Maximize")
                     self.is_maximized = False
+                window.update_idletasks()
+                if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
+                    for child in self.current_monitor_window.winfo_children():
+                        try:
+                            child.pack_configure(fill="both", expand=True)
+                        except Exception:
+                            pass
             except:
-                # Manual maximize fallback
                 if not self.is_maximized:
                     screen_width = window.winfo_screenwidth()
                     screen_height = window.winfo_screenheight()
@@ -1561,7 +1345,6 @@ Status: {device.get('status', 'Unknown')}
                     button.configure(text="Restore")
                     self.is_maximized = True
                 else:
-                    # Restore to calculated size (would need to store original size)
                     window.geometry("1200x800+100+100")
                     button.configure(text="Maximize")
                     self.is_maximized = False
@@ -1907,6 +1690,122 @@ Built with CustomTkinter, psutil, scapy, speedtest-cli
         """Update status bar"""
         self.status_label.configure(text=message)
     
+    def update_graph_status(self, ip, latency, status, timestamp):
+        """Update graph status labels"""
+        def _update_on_main_thread():
+            if ip not in self.monitor_graphs:
+                return
+
+            graph_data = self.monitor_graphs[ip]
+
+            # Update status
+            if status == 'up':
+                status_text = f"Status: Online ({latency:.1f}ms)"
+                graph_data['status_label'].configure(text=status_text, text_color="#4CAF50")
+            else:
+                status_text = "Status: Offline"
+                graph_data['status_label'].configure(text=status_text, text_color="#F44336")
+
+            # Calculate statistics
+            if ip in self.device_monitors:
+                monitor = self.device_monitors[ip]
+                valid_latencies = [lat for _, lat, stat in monitor.buffer if stat == 'up' and not math.isnan(lat)]
+
+                total_pings = len(monitor.buffer)
+                successful_pings = len(valid_latencies)
+                failed_pings = total_pings - successful_pings
+
+                if valid_latencies:
+                    avg_latency = sum(valid_latencies) / len(valid_latencies)
+                    min_latency = min(valid_latencies)
+                    max_latency = max(valid_latencies)
+
+                    loss_percent = (failed_pings / total_pings * 100) if total_pings > 0 else 0
+
+                    stats_text = f"Avg: {avg_latency:.1f}ms | Min: {min_latency:.1f}ms | Max: {max_latency:.1f}ms | Loss: {loss_percent:.1f}%"
+                else:
+                    stats_text = "Avg: --ms | Min: --ms | Max: --ms | Loss: 100%"
+
+                graph_data['stats_label'].configure(text=stats_text)
+
+        # Schedule GUI update on main thread
+        if hasattr(self, 'root'):
+            self.root.after(0, _update_on_main_thread)
+
+    def update_monitor_graph(self, ip, buffer_data):
+        """Update monitoring graph with new data"""
+        def _update_graph_on_main_thread():
+            if ip not in self.monitor_graphs or self.monitor_paused:
+                return
+
+            graph_data = self.monitor_graphs[ip]
+
+            # Extract times and latencies
+            times = []
+            latencies = []
+
+            for timestamp, latency, status in buffer_data:
+                times.append(datetime.fromtimestamp(timestamp))
+                if status == 'up' and not math.isnan(latency):
+                    latencies.append(latency)
+                else:
+                    latencies.append(None)  # None for disconnected points
+
+            # Update graph
+            if times and latencies:
+                # Clear previous data
+                graph_data['line'].set_data([], [])
+
+                # Plot connected segments
+                connected_times = []
+                connected_latencies = []
+
+                for i, (time, latency) in enumerate(zip(times, latencies)):
+                    if latency is not None:
+                        connected_times.append(time)
+                        connected_latencies.append(latency)
+                    else:
+                        # Plot accumulated connected data
+                        if connected_times:
+                            graph_data['axis'].plot(connected_times, connected_latencies, 'g-', linewidth=2)
+                            connected_times = []
+                            connected_latencies = []
+
+                # Plot remaining connected data
+                if connected_times:
+                    graph_data['line'].set_data(connected_times, connected_latencies)
+
+                # Set axis limits
+                if times:
+                    graph_data['axis'].set_xlim(min(times), max(times))
+
+                valid_latencies = [lat for lat in latencies if lat is not None]
+                if valid_latencies:
+                    min_lat = min(valid_latencies)
+                    max_lat = max(valid_latencies)
+                    margin = (max_lat - min_lat) * 0.1 if max_lat > min_lat else 1
+                    graph_data['axis'].set_ylim(max(0, min_lat - margin), max_lat + margin)
+
+                # Format time axis
+                graph_data['axis'].xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+                graph_data['axis'].tick_params(axis='x', rotation=45)
+
+                # Refresh canvas
+                graph_data['canvas'].draw()
+
+        # Schedule GUI update on main thread
+        if hasattr(self, 'root'):
+            self.root.after(0, _update_graph_on_main_thread)
+
+    def toggle_monitoring_pause(self, button):
+        """Toggle monitoring pause state"""
+        self.monitor_paused = not self.monitor_paused
+
+        if self.monitor_paused:
+            button.configure(text="Resume Monitoring")
+        else:
+            button.configure(text="Pause Monitoring")
+
     def run(self):
         """Start application"""
         self.update_status("Ready to scan network")
