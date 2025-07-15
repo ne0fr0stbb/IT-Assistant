@@ -435,11 +435,12 @@ class NetworkMonitorApp:
     
     def setup_menu(self):
         """Setup custom themed menubar using CustomTkinter"""
-        # Create custom menubar frame
+        # Create custom menubar frame with proper padding configuration
         self.menubar = ctk.CTkFrame(self.root, height=30, corner_radius=0)
         self.menubar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=0, pady=0)
         self.menubar.grid_columnconfigure(0, weight=1)
-        
+        self.menubar.grid_propagate(False)  # Prevent the frame from shrinking/expanding
+
         # Create menu button frame
         menu_button_frame = ctk.CTkFrame(self.menubar, fg_color="transparent")
         menu_button_frame.pack(side="left", padx=5, pady=2)
@@ -493,9 +494,10 @@ class NetworkMonitorApp:
         )
         self.about_menu_btn.pack(side="left", padx=2)
         
-        # Adjust main content grid to account for menubar
-        self.root.grid_rowconfigure(1, weight=1)
-    
+        # Configure grid properly to prevent menu bar from affecting other elements
+        self.root.grid_rowconfigure(0, weight=0)  # Menu bar row - no expansion
+        self.root.grid_rowconfigure(1, weight=1)  # Main content row - expandable
+
     def create_sidebar(self):
         """Create sidebar with controls"""
         self.sidebar = ctk.CTkFrame(self.root, width=280, corner_radius=0)
@@ -623,7 +625,7 @@ class NetworkMonitorApp:
         self.theme_switch = ctk.CTkSwitch(
             self.sidebar,
             text="Dark Mode",
-            command=self.change_theme
+            command=self.toggle_theme_via_switch
         )
         self.theme_switch.grid(row=6, column=0, padx=20, pady=10)
         self.theme_switch.select()
@@ -693,21 +695,116 @@ class NetworkMonitorApp:
     def auto_detect_network(self):
         """Auto-detect network range"""
         try:
-            # Get local IP
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(("8.8.8.8", 80))
-                local_ip = s.getsockname()[0]
+            # Method 1: Try to get the active network interface
+            local_ip = None
+            network = None
             
-            # Convert to network range
-            ip_parts = local_ip.split('.')
-            network = f"{'.'.join(ip_parts[:3])}.0/24"
+            # First try the socket method (most reliable for active internet connection)
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    
+                # Convert to network range
+                ip_parts = local_ip.split('.')
+                network = f"{'.'.join(ip_parts[:3])}.0/24"
+                
+                self.update_status(f"Auto-detected network via internet connection: {network} (Local IP: {local_ip})")
+                
+            except Exception as e:
+                self.update_status(f"Internet connection method failed: {e}")
+                
+            # Method 2: If socket method fails, try using psutil to get network interfaces
+            if not local_ip:
+                try:
+                    import psutil
+                    interfaces = psutil.net_if_addrs()
+                    
+                    # Look for active network interfaces (excluding loopback)
+                    for interface_name, addresses in interfaces.items():
+                        if 'loopback' in interface_name.lower() or 'lo' == interface_name.lower():
+                            continue
+                            
+                        for addr in addresses:
+                            if addr.family == socket.AF_INET:  # IPv4
+                                ip = addr.address
+                                if not ip.startswith('127.') and not ip.startswith('169.254.'):
+                                    # Check if this interface is actually active
+                                    stats = psutil.net_if_stats().get(interface_name)
+                                    if stats and stats.isup:
+                                        local_ip = ip
+                                        ip_parts = local_ip.split('.')
+                                        network = f"{'.'.join(ip_parts[:3])}.0/24"
+                                        
+                                        self.update_status(f"Auto-detected network via interface {interface_name}: {network} (Local IP: {local_ip})")
+                                        break
+                        
+                        if local_ip:
+                            break
+                            
+                except Exception as e:
+                    self.update_status(f"Interface detection method failed: {e}")
             
-            self.ip_input.delete(0, tk.END)
-            self.ip_input.insert(0, network)
-            self.update_status(f"Auto-detected network: {network}")
+            # Method 3: If all else fails, try hostname method
+            if not local_ip:
+                try:
+                    local_ip = socket.gethostbyname(socket.gethostname())
+                    if not local_ip.startswith('127.'):
+                        ip_parts = local_ip.split('.')
+                        network = f"{'.'.join(ip_parts[:3])}.0/24"
+                        
+                        self.update_status(f"Auto-detected network via hostname: {network} (Local IP: {local_ip})")
+                    else:
+                        local_ip = None
+                        
+                except Exception as e:
+                    self.update_status(f"Hostname method failed: {e}")
             
+            # Update UI with detected network
+            if network:
+                self.ip_input.delete(0, tk.END)
+                self.ip_input.insert(0, network)
+                
+                # Also update the info label to show current status
+                self.info_label.configure(text=f"Ready to scan network: {network}")
+                
+                # Clear any previous scan results since we're on a new network
+                if hasattr(self, 'all_devices') and self.all_devices:
+                    self.clear_device_table()
+                    self.update_status(f"Cleared previous results - ready to scan new network: {network}")
+                
+                return network
+            else:
+                self.update_status("Failed to auto-detect network. Please enter manually.")
+                return None
+                
         except Exception as e:
             self.update_status(f"Auto-detect failed: {e}")
+            return None
+    
+    def detect_network_change(self):
+        """Detect if the network has changed and update accordingly"""
+        current_network = self.ip_input.get().strip()
+        detected_network = self.auto_detect_network()
+        
+        if detected_network and current_network != detected_network:
+            # Network has changed
+            if messagebox.askyesno(
+                "Network Change Detected", 
+                f"Network change detected!\n\nPrevious: {current_network}\nCurrent: {detected_network}\n\nWould you like to clear the previous scan results and scan the new network?",
+                icon="question"
+            ):
+                self.clear_device_table()
+                self.update_status(f"Network changed from {current_network} to {detected_network}")
+                return True
+            else:
+                # User chose to keep the old network, restore it
+                self.ip_input.delete(0, tk.END)
+                self.ip_input.insert(0, current_network)
+                self.update_status(f"Keeping previous network: {current_network}")
+                return False
+        
+        return detected_network is not None
     
     def toggle_scan(self):
         """Toggle network scanning"""
@@ -723,10 +820,18 @@ class NetworkMonitorApp:
             messagebox.showerror("Error", "Please enter an IP range")
             return
         
+        # Validate IP range format
+        try:
+            test_network = ipaddress.ip_network(ip_range, strict=False)
+            self.update_status(f"Starting scan of {ip_range} ({len(list(test_network.hosts()))} hosts)")
+        except ValueError as e:
+            messagebox.showerror("Invalid IP Range", f"The IP range '{ip_range}' is not valid.\n\nError: {e}\n\nExample formats:\n- 192.168.1.0/24\n- 10.0.0.0/24\n- 172.16.0.0/24")
+            return
+        
         self.scanning = True
         self.scan_btn.configure(text="Stop Scan", fg_color="#d32f2f")
         self.progress_bar.set(0)
-        self.info_label.configure(text="Scanning...")
+        self.info_label.configure(text=f"Scanning {ip_range}...")
         
         # Clear previous results
         self.clear_device_table()
@@ -792,6 +897,9 @@ class NetworkMonitorApp:
         self.device_rows.clear()
         self.all_devices.clear()
         self.selected_devices.clear()
+        
+        # Reset summary
+        self.summary_label.configure(text="Devices found: 0 | Problematic (>500ms): 0")
     
     def add_device_to_table(self, device):
         """Add device to table"""
@@ -1182,7 +1290,7 @@ Status: {device.get('status', 'Unknown')}
         control_frame = ctk.CTkFrame(monitor_window, height=80)
         control_frame.pack(side="bottom", fill="x", padx=10, pady=10)
         control_frame.pack_propagate(False)
-
+        
         main_frame = ctk.CTkFrame(monitor_window)
         main_frame.pack(fill="both", expand=True, padx=10, pady=(10, 0))
         main_frame.pack_propagate(False)
@@ -1294,7 +1402,7 @@ Status: {device.get('status', 'Unknown')}
                 monitor.stop()
             self.device_monitors.clear()
             self.monitor_graphs.clear()
-            if hasattr(self, 'current_monitor_window'):
+            if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
                 self.current_monitor_window = None
             plt.close('all')
             monitor_window.destroy()
@@ -1312,11 +1420,19 @@ Status: {device.get('status', 'Unknown')}
                 button.configure(text="Maximize")
                 self.is_maximized = False
             window.update_idletasks()
-            # Ensure all frames fill available space
-            if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
+            # Ensure main frame fills available space but preserve control frame fixed height
+            if self.is_maximized and hasattr(self, 'current_monitor_window') and self.current_monitor_window:
                 for child in self.current_monitor_window.winfo_children():
                     try:
-                        child.pack_configure(fill="both", expand=True)
+                        # Only expand the main frame, not the control frame
+                        if hasattr(child, 'pack_info'):
+                            pack_info = child.pack_info()
+                            if pack_info.get('side') == 'bottom':
+                                # This is the control frame - keep it fixed height
+                                child.pack_configure(fill="x", expand=False)
+                            else:
+                                # This is the main frame - allow it to expand
+                                child.pack_configure(fill="both", expand=True)
                     except Exception:
                         pass
         except Exception as e:
@@ -1334,7 +1450,15 @@ Status: {device.get('status', 'Unknown')}
                 if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
                     for child in self.current_monitor_window.winfo_children():
                         try:
-                            child.pack_configure(fill="both", expand=True)
+                            # Only expand the main frame, not the control frame
+                            if hasattr(child, 'pack_info'):
+                                pack_info = child.pack_info()
+                                if pack_info.get('side') == 'bottom':
+                                    # This is the control frame - keep it fixed height
+                                    child.pack_configure(fill="x", expand=False)
+                                else:
+                                    # This is the main frame - allow it to expand
+                                    child.pack_configure(fill="both", expand=True)
                         except Exception:
                             pass
             except:
@@ -1574,25 +1698,25 @@ Status: {device.get('status', 'Unknown')}
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to open file: {e}")
     
+    def update_network_info(self, network_range=None):
+        """Update the info label with current network information"""
+        if not network_range:
+            network_range = self.ip_input.get().strip()
+        
+        if network_range:
+            try:
+                # Validate and get network info
+                test_network = ipaddress.ip_network(network_range, strict=False)
+                host_count = len(list(test_network.hosts()))
+                self.info_label.configure(text=f"Network: {network_range} ({host_count} hosts) - Ready to scan")
+            except ValueError:
+                self.info_label.configure(text=f"Network: {network_range} - Invalid format")
+        else:
+            self.info_label.configure(text="Enter IP range or press Auto-Detect")
+    
+    # ...existing code...
     
     def toggle_theme_via_switch(self):
-        """Toggle theme by programmatically triggering the theme switch"""
-        # Toggle the switch state, which will automatically call change_theme()
-        if self.theme_switch.get():
-            self.theme_switch.deselect()
-        else:
-            self.theme_switch.select()
-        
-        # Manually trigger the change_theme method since deselect/select might not always trigger it
-        self.change_theme()
-    
-    def change_theme(self):
-        """Change theme based on switch"""
-        if self.theme_switch.get():
-            ctk.set_appearance_mode("dark")
-        else:
-            ctk.set_appearance_mode("light")
-        
         # Update menubar button colors after theme change
         self.root.after(50, self.update_menubar_colors)
     
