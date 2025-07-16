@@ -44,6 +44,23 @@ from matplotlib.figure import Figure
 import numpy as np
 from PIL import Image
 
+# Import settings system
+try:
+    from settings import settings_manager, get_theme, set_theme, get_window_size, set_window_size
+    from settings_manager import show_settings_dialog
+    SETTINGS_AVAILABLE = True
+except ImportError:
+    SETTINGS_AVAILABLE = False
+    print("Settings system not available")
+
+# Import nmap monitor module
+try:
+    from nmap_monitor import NmapMonitor
+    NMAP_AVAILABLE = True
+except ImportError:
+    NMAP_AVAILABLE = False
+    print("Nmap monitor module not available")
+
 # Try to import advanced modules with fallbacks
 try:
     from scapy.layers.l2 import ARP, Ether, srp
@@ -390,16 +407,27 @@ class SpeedTestRunner:
 
 class NetworkMonitorApp:
     def __init__(self):
-        # Set appearance
-        ctk.set_appearance_mode("dark")
+        # Load saved settings first
+        if SETTINGS_AVAILABLE:
+            saved_theme = get_theme()
+            saved_width, saved_height = get_window_size()
+        else:
+            saved_theme = "dark"
+            saved_width, saved_height = 1200, 800
+
+        # Set appearance based on saved settings
+        ctk.set_appearance_mode(saved_theme)
         ctk.set_default_color_theme("blue")
         
         # Create main window
         self.root = ctk.CTk()
         self.root.title("I.T Assistant - Network Monitor")
-        self.root.geometry("1200x800")
+        self.root.geometry(f"{saved_width}x{saved_height}")
         self.root.minsize(900, 600)
         
+        # Bind window resize event to save size
+        self.root.bind("<Configure>", self.on_window_resize)
+
         # Initialize variables
         self.scanning = False
         self.monitoring = False
@@ -410,7 +438,16 @@ class NetworkMonitorApp:
         self.device_monitors = {}
         self.monitor_graphs = {}
         self.monitor_paused = False
-        
+        self.is_maximized = False
+        self.current_monitor_window = None
+        self.last_window_size = (saved_width, saved_height)
+
+        # Initialize modules
+        if NMAP_AVAILABLE:
+            self.nmap_monitor = NmapMonitor(self)
+        else:
+            self.nmap_monitor = None
+
         # Setup UI
         self.setup_ui()
         self.setup_menu()
@@ -418,6 +455,22 @@ class NetworkMonitorApp:
         # Auto-detect network
         self.auto_detect_network()
     
+    def on_window_resize(self, event):
+        """Handle window resize event to save size"""
+        # Only save size for the root window, not child windows
+        if event.widget == self.root:
+            if SETTINGS_AVAILABLE:
+                # Debounce resize events to avoid too many saves
+                self.root.after(500, self.save_window_size)
+
+    def save_window_size(self):
+        """Save current window size to settings"""
+        if SETTINGS_AVAILABLE:
+            current_size = (self.root.winfo_width(), self.root.winfo_height())
+            if current_size != self.last_window_size:
+                set_window_size(current_size[0], current_size[1])
+                self.last_window_size = current_size
+
     def setup_ui(self):
         """Setup main UI"""
         # Configure grid
@@ -594,7 +647,7 @@ class NetworkMonitorApp:
         # Start Network Scan button
         self.scan_btn = ctk.CTkButton(
             tools_frame,
-            text="Start Network Scan",
+            text="Network Scan",
             command=self.toggle_scan,
             height=button_height,
             font=button_font
@@ -604,13 +657,23 @@ class NetworkMonitorApp:
         # Live Monitor Selected button
         self.live_monitor_btn = ctk.CTkButton(
             tools_frame,
-            text="Live Monitor Selected",
+            text="Live Monitor",
             command=self.open_live_monitor,
             height=button_height,
             font=button_font
         )
         self.live_monitor_btn.pack(padx=10, pady=5, fill="x")
         
+        # Nmap Scan Selected button
+        self.nmap_scan_btn = ctk.CTkButton(
+            tools_frame,
+            text="Nmap Scan",
+            command=self.nmap_scan_selected,
+            height=button_height,
+            font=button_font
+        )
+        self.nmap_scan_btn.pack(padx=10, pady=5, fill="x")
+
         # Internet Speed Test button
         self.speedtest_btn = ctk.CTkButton(
             tools_frame,
@@ -1020,6 +1083,35 @@ class NetworkMonitorApp:
                 query in device.get('hostname', '').lower()):
                 self.add_device_to_table(device)
     
+    def nmap_scan_selected(self):
+        """Handle Nmap scan for selected devices"""
+        if not NMAP_AVAILABLE:
+            messagebox.showerror("Nmap Not Available", "Nmap monitor module is not available.")
+            return
+
+        if not self.selected_devices:
+            messagebox.showwarning("No Devices Selected", "Please select at least one device to scan.")
+            return
+
+        # Check if more than one device is selected
+        if len(self.selected_devices) > 1:
+            messagebox.showwarning(
+                "Multiple Devices Selected",
+                f"You have selected {len(self.selected_devices)} devices. Nmap can only scan one device at a time.\n\nPlease select only one device and try again."
+            )
+            return
+
+        # Get the selected device
+        selected_device = self.selected_devices[0]
+        ip = selected_device['ip']
+
+        # Use the existing nmap_monitor to show the dialog
+        if self.nmap_monitor:
+            self.nmap_monitor.show_nmap_dialog(ip)
+        else:
+            # Fallback to the built-in nmap functionality
+            self.show_nmap_dialog(ip)
+
     def show_nmap_dialog(self, ip):
         """Show nmap options dialog"""
         nmap_window = ctk.CTkToplevel(self.root)
@@ -1714,9 +1806,27 @@ Status: {device.get('status', 'Unknown')}
         else:
             self.info_label.configure(text="Enter IP range or press Auto-Detect")
     
-    # ...existing code...
-    
     def toggle_theme_via_switch(self):
+        # Get current theme and toggle it
+        current_mode = ctk.get_appearance_mode()
+        if current_mode.lower() == "dark":
+            new_theme = "light"
+        else:
+            new_theme = "dark"
+
+        # Apply the new theme
+        ctk.set_appearance_mode(new_theme)
+
+        # Save the theme preference to settings
+        if SETTINGS_AVAILABLE:
+            set_theme(new_theme)
+
+        # Update theme switch state to match current theme
+        if new_theme == "dark":
+            self.theme_switch.select()
+        else:
+            self.theme_switch.deselect()
+
         # Update menubar button colors after theme change
         self.root.after(50, self.update_menubar_colors)
     
@@ -1761,6 +1871,11 @@ Status: {device.get('status', 'Unknown')}
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Toggle Theme", command=self.toggle_theme_via_switch)
         
+        # Add settings option if available
+        if SETTINGS_AVAILABLE:
+            menu.add_separator()
+            menu.add_command(label="Settings...", command=self.show_settings_dialog)
+
         # Position menu below button
         x = self.options_menu_btn.winfo_rootx()
         y = self.options_menu_btn.winfo_rooty() + self.options_menu_btn.winfo_height()
