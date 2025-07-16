@@ -115,21 +115,73 @@ class NetworkScanner:
         return None
     
     def get_hostname(self, ip):
-        """Get hostname for IP"""
+        """Get hostname for IP with timeout"""
         try:
-            return socket.gethostbyaddr(ip)[0]
-        except:
-            return None
-    
+            # Set a shorter timeout for hostname resolution
+            socket.setdefaulttimeout(2.0)  # 2 second timeout
+            hostname = socket.gethostbyaddr(str(ip))[0]
+            # Reset timeout
+            socket.setdefaulttimeout(None)
+            return hostname if hostname else "Unknown"
+        except (socket.herror, socket.gaierror, socket.timeout):
+            # Reset timeout on error
+            socket.setdefaulttimeout(None)
+            return "Unknown"
+        except Exception:
+            # Reset timeout on any other error
+            socket.setdefaulttimeout(None)
+            return "Unknown"
+
     def get_manufacturer(self, mac):
-        """Get manufacturer from MAC"""
+        """Get manufacturer from MAC with improved error handling"""
+        if not mac or mac == 'Unknown':
+            return "Unknown"
+
         if self.mac_parser:
             try:
-                return self.mac_parser.get_manuf(mac)
-            except:
-                pass
-        return None
-    
+                # Clean the MAC address format
+                clean_mac = mac.replace('-', ':').replace('.', ':').upper()
+                manufacturer = self.mac_parser.get_manuf(clean_mac)
+                return manufacturer if manufacturer else "Unknown"
+            except Exception as e:
+                print(f"Error getting manufacturer for MAC {mac}: {e}")
+                return "Unknown"
+        return "Unknown"
+
+    def get_mac_address(self, ip):
+        """Get MAC address using ARP table lookup as fallback"""
+        try:
+            # First try to get MAC from system ARP table
+            if platform.system().lower() == 'windows':
+                result = subprocess.run(['arp', '-a', str(ip)],
+                                      capture_output=True, text=True, timeout=5,
+                                      creationflags=subprocess.CREATE_NO_WINDOW)
+                if result.returncode == 0:
+                    # Parse ARP output to extract MAC
+                    for line in result.stdout.split('\n'):
+                        if str(ip) in line:
+                            # Look for MAC address pattern
+                            import re
+                            mac_match = re.search(r'([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}', line)
+                            if mac_match:
+                                return mac_match.group(0).upper()
+            else:
+                # Linux/Unix systems
+                result = subprocess.run(['arp', '-n', str(ip)],
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if str(ip) in line:
+                            parts = line.split()
+                            if len(parts) >= 3:
+                                mac = parts[2]
+                                if ':' in mac and len(mac) == 17:
+                                    return mac.upper()
+        except Exception as e:
+            print(f"Error getting MAC for {ip}: {e}")
+
+        return "Unknown"
+
     def arp_scan_ip(self, ip):
         """ARP scan single IP"""
         if not self.scanning:
@@ -166,40 +218,115 @@ class NetworkScanner:
                         'manufacturer': manufacturer,
                         'status': 'Online'
                     })
-                    
+
+                # If ARP scan found no devices, fall back to ping scanning
+                if not devices:
+                    ping_result = self.ping_host_simple(ip)
+                    if ping_result[0]:  # If ping succeeded
+                        hostname = self.get_hostname(ip)
+                        web_service = self.check_web_port(ip)
+                        # Try to get MAC from ARP table
+                        mac = self.get_mac_address(ip)
+                        manufacturer = self.get_manufacturer(mac)
+
+                        devices.append({
+                            'ip': str(ip),
+                            'mac': mac,
+                            'response_time': ping_result[1],  # Use actual ping time
+                            'web_service': web_service,
+                            'hostname': hostname,
+                            'manufacturer': manufacturer,
+                            'status': 'Online'
+                        })
+
             except Exception as e:
                 print(f"ARP scan error for {ip}: {e}")
+                # Fallback to ping scanning if ARP fails
+                ping_result = self.ping_host_simple(ip)
+                if ping_result[0]:  # If ping succeeded
+                    hostname = self.get_hostname(ip)
+                    web_service = self.check_web_port(ip)
+                    # Try to get MAC from ARP table
+                    mac = self.get_mac_address(ip)
+                    manufacturer = self.get_manufacturer(mac)
+
+                    devices.append({
+                        'ip': str(ip),
+                        'mac': mac,
+                        'response_time': ping_result[1],  # Use actual ping time
+                        'web_service': web_service,
+                        'hostname': hostname,
+                        'manufacturer': manufacturer,
+                        'status': 'Online'
+                    })
         else:
             # Fallback to ping scanning
-            if self.ping_host_simple(ip):
+            ping_result = self.ping_host_simple(ip)
+            if ping_result[0]:  # If ping succeeded
                 hostname = self.get_hostname(ip)
                 web_service = self.check_web_port(ip)
-                
+                # Try to get MAC from ARP table
+                mac = self.get_mac_address(ip)
+                manufacturer = self.get_manufacturer(mac)
+
                 devices.append({
                     'ip': str(ip),
-                    'mac': 'Unknown',
-                    'response_time': 0.1,  # Estimated
+                    'mac': mac,
+                    'response_time': ping_result[1],  # Use actual ping time
                     'web_service': web_service,
                     'hostname': hostname,
-                    'manufacturer': 'Unknown',
+                    'manufacturer': manufacturer,
                     'status': 'Online'
                 })
                 
         return devices
     
     def ping_host_simple(self, ip):
-        """Simple ping implementation"""
+        """Simple ping implementation with response time measurement"""
         try:
             if platform.system().lower() == 'windows':
-                result = subprocess.run(['ping', '-n', '1', '-w', '1000', str(ip)], 
+                start_time = time.time()
+                result = subprocess.run(['ping', '-n', '1', '-w', '1000', str(ip)],
                                       capture_output=True, text=True, timeout=2, creationflags=subprocess.CREATE_NO_WINDOW)
+                end_time = time.time()
+
+                if result.returncode == 0:
+                    # Try to extract actual ping time from output
+                    output = result.stdout
+                    import re
+                    time_match = re.search(r'time[<=](\d+(?:\.\d+)?)ms', output)
+                    if time_match:
+                        actual_time = float(time_match.group(1)) / 1000  # Convert to seconds
+                        return True, actual_time
+                    elif 'time<1ms' in output.lower():
+                        return True, 0.0005  # 0.5ms
+                    else:
+                        # Fallback to measured time
+                        return True, end_time - start_time
+                else:
+                    return False, None
             else:
-                result = subprocess.run(['ping', '-c', '1', '-W', '1', str(ip)], 
+                start_time = time.time()
+                result = subprocess.run(['ping', '-c', '1', '-W', '1', str(ip)],
                                       capture_output=True, text=True, timeout=2)
-            return result.returncode == 0
+                end_time = time.time()
+
+                if result.returncode == 0:
+                    # Try to extract actual ping time from output
+                    output = result.stdout
+                    import re
+                    time_match = re.search(r'time=(\d+\.?\d*) ms', output)
+                    if time_match:
+                        actual_time = float(time_match.group(1)) / 1000  # Convert to seconds
+                        return True, actual_time
+                    else:
+                        # Fallback to measured time
+                        return True, end_time - start_time
+                else:
+                    return False, None
         except:
-            return False
-    
+            return False, None
+
     def scan(self):
         """Main scanning method"""
         devices = []
@@ -739,7 +866,10 @@ class NetworkMonitorApp:
                 text=header,
                 font=ctk.CTkFont(weight="bold")
             )
-            label.grid(row=0, column=i, padx=5, pady=5, sticky="ew")
+            if i == 0:  # Center the "Select" header
+                label.grid(row=0, column=i, padx=5, pady=5)
+            else:
+                label.grid(row=0, column=i, padx=5, pady=5, sticky="ew")
         
         self.device_rows = []
     
@@ -909,7 +1039,7 @@ class NetworkMonitorApp:
         self.scanning = False
         if self.scanner:
             self.scanner.stop()
-        self.scan_btn.configure(text="Start Network Scan", fg_color="#1f538d")
+        self.scan_btn.configure(text="Network Scan", fg_color="#1f538d")
         self.info_label.configure(text="Scan stopped")
         self.update_status("Scan stopped by user")
     
@@ -942,7 +1072,7 @@ class NetworkMonitorApp:
         """Handle scan completion"""
         self.all_devices = devices
         self.scanning = False
-        self.scan_btn.configure(text="Start Network Scan", fg_color="#1f538d")
+        self.scan_btn.configure(text="Network Scan", fg_color="#1f538d")
         self.progress_bar.set(1.0)
         self.info_label.configure(text="Scan complete")
         
@@ -972,7 +1102,7 @@ class NetworkMonitorApp:
         row_num = len(self.device_rows) + 1
         row_widgets = []
         
-        # Select checkbox
+        # Select checkbox - directly centered in grid
         var = tk.BooleanVar()
         checkbox = ctk.CTkCheckBox(
             self.table_frame, 
@@ -980,7 +1110,7 @@ class NetworkMonitorApp:
             variable=var,
             command=lambda: self.toggle_device_selection(device, var.get())
         )
-        checkbox.grid(row=row_num, column=0, padx=5, pady=2)
+        checkbox.grid(row=row_num, column=0, padx=5, pady=2, sticky="")
         row_widgets.append(checkbox)
         
         # IP Address (clickable for nmap)
@@ -1055,7 +1185,12 @@ class NetworkMonitorApp:
         
         # Configure column weights
         for i in range(8):
-            self.table_frame.grid_columnconfigure(i, weight=1 if i == 1 else 0)
+            if i == 0:  # Select column - fixed width, no expansion
+                self.table_frame.grid_columnconfigure(i, weight=0, minsize=80)
+            elif i == 1:  # IP column - expandable
+                self.table_frame.grid_columnconfigure(i, weight=1)
+            else:
+                self.table_frame.grid_columnconfigure(i, weight=0)
     
     def toggle_device_selection(self, device, selected):
         """Toggle device selection for monitoring"""
@@ -1677,7 +1812,7 @@ Status: {device.get('status', 'Unknown')}
                 progress_bar.set(0)
             
             action_button.configure(command=cancel_test)
-            
+
             test_thread = threading.Thread(target=speed_test_runner.run_test, daemon=True)
             test_thread.start()
 
@@ -1874,7 +2009,7 @@ Status: {device.get('status', 'Unknown')}
         # Add settings option if available
         if SETTINGS_AVAILABLE:
             menu.add_separator()
-            menu.add_command(label="Settings...", command=self.show_settings_dialog)
+            menu.add_command(label="Settings...", command=lambda: show_settings_dialog(self.root))
 
         # Position menu below button
         x = self.options_menu_btn.winfo_rootx()

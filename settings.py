@@ -215,6 +215,10 @@ class SettingsManager:
         except AttributeError:
             return False
 
+    def update_setting(self, category: str, key: str, value):
+        """Update a specific setting value (alias for set_setting)"""
+        return self.set_setting(category, key, value)
+
     def reset_to_defaults(self):
         """Reset all settings to default values"""
         self.settings = ApplicationSettings()
