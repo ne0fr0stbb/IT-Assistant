@@ -51,212 +51,137 @@ class InterfaceSettings:
 
 @dataclass
 class NetworkSettings:
-    """Network-specific settings"""
-    preferred_interface: str = "auto"
-    enable_ipv6: bool = False
-    dns_servers: list = None
-    proxy_settings: dict = None
-    connection_timeout: int = 10
+    """Network configuration"""
+    default_interface: str = ""
+    preferred_dns: str = "8.8.8.8"
+    secondary_dns: str = "8.8.4.4"
+    connection_timeout: int = 5
     retry_attempts: int = 3
-
-    def __post_init__(self):
-        if self.dns_servers is None:
-            self.dns_servers = ["8.8.8.8", "8.8.4.4"]
-        if self.proxy_settings is None:
-            self.proxy_settings = {"enabled": False, "host": "", "port": 8080}
 
 
 @dataclass
 class AlertSettings:
-    """Alert and notification settings"""
-    enable_sound: bool = True
-    enable_desktop_notifications: bool = True
-    alert_types: dict = None
-    
-    # Email notification settings
-    email_notifications: bool = False
-    email_settings: dict = None
-    email_recipient_list: list = None
-    email_threshold_ms: int = 1000
-    email_consecutive_failures: int = 3
-    email_cooldown_minutes: int = 15
-    email_batch_alerts: bool = True
-    email_batch_interval_minutes: int = 5
-    email_send_reports: bool = False
-    email_report_interval_hours: int = 24
-    email_subject_template: str = "[Network Monitor] Alert: {alert_type}"
-
-    def __post_init__(self):
-        if self.alert_types is None:
-            self.alert_types = {
-                "device_down": True,
-                "high_latency": True,
-                "new_device": True,
-                "network_change": True
-            }
-        if self.email_settings is None:
-            self.email_settings = {
-                "smtp_server": "",
-                "smtp_port": 587,
-                "username": "",
-                "password": "",
-                "use_tls": True,
-                "use_ssl": False,
-                "from_address": "",
-                "from_name": "Network Monitor"
-            }
-        if self.email_recipient_list is None:
-            self.email_recipient_list = []
+    """Alert and notification configuration"""
+    enable_sound_alerts: bool = True
+    enable_email_alerts: bool = False
+    email_server: str = ""
+    email_port: int = 587
+    email_username: str = ""
+    email_password: str = ""
+    email_recipients: str = ""
+    alert_cooldown: int = 60
 
 
 @dataclass
 class ApplicationSettings:
-    """Main application settings container"""
-    scan: ScanSettings = None
-    monitor: MonitorSettings = None
-    interface: InterfaceSettings = None
-    network: NetworkSettings = None
-    alerts: AlertSettings = None
+    """Complete application settings"""
+    scan: ScanSettings
+    monitor: MonitorSettings
+    interface: InterfaceSettings
+    network: NetworkSettings
+    alerts: AlertSettings
 
-    def __post_init__(self):
-        if self.scan is None:
-            self.scan = ScanSettings()
-        if self.monitor is None:
-            self.monitor = MonitorSettings()
-        if self.interface is None:
-            self.interface = InterfaceSettings()
-        if self.network is None:
-            self.network = NetworkSettings()
-        if self.alerts is None:
-            self.alerts = AlertSettings()
+    def __init__(self):
+        self.scan = ScanSettings()
+        self.monitor = MonitorSettings()
+        self.interface = InterfaceSettings()
+        self.network = NetworkSettings()
+        self.alerts = AlertSettings()
 
 
 class SettingsManager:
-    """Manages application settings with persistence"""
+    """Settings persistence and management"""
 
-    def __init__(self, app_name: str = "NetworkMonitor"):
-        self.app_name = app_name
-        self.settings_dir = self._get_settings_directory()
-        self.settings_file = self.settings_dir / "settings.json"
+    def __init__(self, config_dir: Optional[str] = None):
+        if config_dir is None:
+            self.config_dir = Path.home() / '.network_monitor'
+        else:
+            self.config_dir = Path(config_dir)
+
+        self.config_dir.mkdir(exist_ok=True)
+        self.config_file = self.config_dir / 'settings.json'
         self.settings = ApplicationSettings()
-
-        # Ensure settings directory exists
-        self.settings_dir.mkdir(parents=True, exist_ok=True)
-
-        # Load settings on initialization
         self.load_settings()
-
-    def _get_settings_directory(self) -> Path:
-        """Get the appropriate settings directory for the OS"""
-        import platform
-
-        system = platform.system()
-        if system == "Windows":
-            # Use AppData/Roaming for Windows
-            appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
-            return Path(appdata) / self.app_name
-        elif system == "Darwin":  # macOS
-            return Path.home() / "Library" / "Application Support" / self.app_name
-        else:  # Linux and others
-            # Use XDG_CONFIG_HOME or ~/.config
-            config_home = os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')
-            return Path(config_home) / self.app_name.lower()
 
     def load_settings(self) -> bool:
         """Load settings from file"""
         try:
-            if self.settings_file.exists():
-                with open(self.settings_file, 'r', encoding='utf-8') as f:
+            if self.config_file.exists():
+                with open(self.config_file, 'r') as f:
                     data = json.load(f)
 
-                # Reconstruct settings from JSON data
-                self.settings = ApplicationSettings(
-                    scan=ScanSettings(**data.get('scan', {})),
-                    monitor=MonitorSettings(**data.get('monitor', {})),
-                    interface=InterfaceSettings(**data.get('interface', {})),
-                    network=NetworkSettings(**data.get('network', {})),
-                    alerts=AlertSettings(**data.get('alerts', {}))
-                )
+                # Update settings from loaded data
+                if 'scan' in data:
+                    for key, value in data['scan'].items():
+                        if hasattr(self.settings.scan, key):
+                            setattr(self.settings.scan, key, value)
+
+                if 'monitor' in data:
+                    for key, value in data['monitor'].items():
+                        if hasattr(self.settings.monitor, key):
+                            setattr(self.settings.monitor, key, value)
+
+                if 'interface' in data:
+                    for key, value in data['interface'].items():
+                        if hasattr(self.settings.interface, key):
+                            setattr(self.settings.interface, key, value)
+
+                if 'network' in data:
+                    for key, value in data['network'].items():
+                        if hasattr(self.settings.network, key):
+                            setattr(self.settings.network, key, value)
+
+                if 'alerts' in data:
+                    for key, value in data['alerts'].items():
+                        if hasattr(self.settings.alerts, key):
+                            setattr(self.settings.alerts, key, value)
+
                 return True
-            else:
-                # Create default settings file if it doesn't exist
-                self.save_settings()
-                return False
         except Exception as e:
             print(f"Error loading settings: {e}")
-            # If loading fails, use default settings
-            self.settings = ApplicationSettings()
-            return False
+
+        return False
 
     def save_settings(self) -> bool:
         """Save settings to file"""
         try:
-            # Convert settings to dictionary, handling nested dataclasses
-            settings_dict = {
+            data = {
                 'scan': asdict(self.settings.scan),
                 'monitor': asdict(self.settings.monitor),
                 'interface': asdict(self.settings.interface),
                 'network': asdict(self.settings.network),
-                'alerts': asdict(self.settings.alerts)
+                'alerts': asdict(self.settings.alerts),
+                'last_updated': datetime.now().isoformat()
             }
 
-            # Create backup of existing settings
-            if self.settings_file.exists():
-                backup_file = self.settings_file.with_suffix('.json.bak')
-                self.settings_file.replace(backup_file)
-
-            # Save settings
-            with open(self.settings_file, 'w', encoding='utf-8') as f:
-                json.dump(settings_dict, f, indent=2, ensure_ascii=False)
+            with open(self.config_file, 'w') as f:
+                json.dump(data, f, indent=2)
 
             return True
         except Exception as e:
             print(f"Error saving settings: {e}")
             return False
 
-    def get_setting(self, category: str, key: str, default=None):
-        """Get a specific setting value"""
-        try:
-            category_obj = getattr(self.settings, category)
-            return getattr(category_obj, key, default)
-        except AttributeError:
-            return default
-
-    def set_setting(self, category: str, key: str, value):
-        """Set a specific setting value"""
-        try:
-            category_obj = getattr(self.settings, category)
-            setattr(category_obj, key, value)
-            return True
-        except AttributeError:
-            return False
-
-    def update_setting(self, category: str, key: str, value):
-        """Update a specific setting value (alias for set_setting)"""
-        return self.set_setting(category, key, value)
-
     def reset_to_defaults(self):
-        """Reset all settings to default values"""
+        """Reset all settings to defaults"""
         self.settings = ApplicationSettings()
         self.save_settings()
 
     def export_settings(self, file_path: str) -> bool:
-        """Export settings to a file"""
+        """Export settings to specified file"""
         try:
-            export_data = {
-                'version': '1.0',
-                'exported_at': str(datetime.now()),
-                'settings': {
-                    'scan': asdict(self.settings.scan),
-                    'monitor': asdict(self.settings.monitor),
-                    'interface': asdict(self.settings.interface),
-                    'network': asdict(self.settings.network),
-                    'alerts': asdict(self.settings.alerts)
-                }
+            data = {
+                'scan': asdict(self.settings.scan),
+                'monitor': asdict(self.settings.monitor),
+                'interface': asdict(self.settings.interface),
+                'network': asdict(self.settings.network),
+                'alerts': asdict(self.settings.alerts),
+                'exported': datetime.now().isoformat(),
+                'version': '1.0'
             }
 
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(export_data, f, indent=2, ensure_ascii=False)
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=2)
 
             return True
         except Exception as e:
@@ -264,27 +189,37 @@ class SettingsManager:
             return False
 
     def import_settings(self, file_path: str) -> bool:
-        """Import settings from a file"""
+        """Import settings from specified file"""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, 'r') as f:
                 data = json.load(f)
 
-            # Validate import data
-            if 'settings' not in data:
-                return False
+            # Validate and import settings
+            if 'scan' in data:
+                for key, value in data['scan'].items():
+                    if hasattr(self.settings.scan, key):
+                        setattr(self.settings.scan, key, value)
 
-            settings_data = data['settings']
+            if 'monitor' in data:
+                for key, value in data['monitor'].items():
+                    if hasattr(self.settings.monitor, key):
+                        setattr(self.settings.monitor, key, value)
 
-            # Import settings
-            self.settings = ApplicationSettings(
-                scan=ScanSettings(**settings_data.get('scan', {})),
-                monitor=MonitorSettings(**settings_data.get('monitor', {})),
-                interface=InterfaceSettings(**settings_data.get('interface', {})),
-                network=NetworkSettings(**settings_data.get('network', {})),
-                alerts=AlertSettings(**settings_data.get('alerts', {}))
-            )
+            if 'interface' in data:
+                for key, value in data['interface'].items():
+                    if hasattr(self.settings.interface, key):
+                        setattr(self.settings.interface, key, value)
 
-            # Save imported settings
+            if 'network' in data:
+                for key, value in data['network'].items():
+                    if hasattr(self.settings.network, key):
+                        setattr(self.settings.network, key, value)
+
+            if 'alerts' in data:
+                for key, value in data['alerts'].items():
+                    if hasattr(self.settings.alerts, key):
+                        setattr(self.settings.alerts, key, value)
+
             self.save_settings()
             return True
         except Exception as e:
@@ -296,52 +231,33 @@ class SettingsManager:
 settings_manager = SettingsManager()
 
 
-def get_settings() -> ApplicationSettings:
-    """Get the global settings instance"""
-    return settings_manager.settings
+# Utility functions for common settings access
+def get_theme() -> str:
+    """Get current theme setting"""
+    return settings_manager.settings.interface.theme
 
 
-def save_settings() -> bool:
-    """Save the global settings"""
-    return settings_manager.save_settings()
-
-
-def get_setting(category: str, key: str, default=None):
-    """Get a specific setting value"""
-    return settings_manager.get_setting(category, key, default)
-
-
-def set_setting(category: str, key: str, value):
-    """Set a specific setting value and save"""
-    if settings_manager.set_setting(category, key, value):
-        settings_manager.save_settings()
-        return True
+def set_theme(theme: str) -> bool:
+    """Set theme and save settings"""
+    if theme in ["dark", "light"]:
+        settings_manager.settings.interface.theme = theme
+        return settings_manager.save_settings()
     return False
 
 
-# Helper functions for common settings
-def get_theme() -> str:
-    """Get the current theme setting"""
-    return settings_manager.get_setting('interface', 'theme', 'dark')
-
-
-def set_theme(theme: str):
-    """Set the theme setting"""
-    if theme in ['dark', 'light']:
-        set_setting('interface', 'theme', theme)
-
-
 def get_window_size() -> tuple:
-    """Get the window size setting"""
-    width = settings_manager.get_setting('interface', 'window_width', 1200)
-    height = settings_manager.get_setting('interface', 'window_height', 800)
-    return width, height
+    """Get current window size setting"""
+    return (
+        settings_manager.settings.interface.window_width,
+        settings_manager.settings.interface.window_height
+    )
 
 
-def set_window_size(width: int, height: int):
-    """Set the window size setting"""
-    set_setting('interface', 'window_width', width)
-    set_setting('interface', 'window_height', height)
+def set_window_size(width: int, height: int) -> bool:
+    """Set window size and save settings"""
+    settings_manager.settings.interface.window_width = width
+    settings_manager.settings.interface.window_height = height
+    return settings_manager.save_settings()
 
 
 def get_auto_detect_network() -> bool:
