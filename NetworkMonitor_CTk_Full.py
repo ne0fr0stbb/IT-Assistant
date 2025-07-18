@@ -856,7 +856,10 @@ class NetworkMonitorApp:
             label_text="Discovered Devices"
         )
         self.table_frame.grid(row=2, column=0, padx=20, pady=10, sticky="nsew")
-        self.table_frame.grid_columnconfigure(1, weight=1)
+        
+        # Configure column weights for equal spacing
+        for i in range(8):
+            self.table_frame.grid_columnconfigure(i, weight=1, minsize=100)
         
         # Table headers
         headers = ["Select", "IP Address", "MAC Address", "Hostname", "Manufacturer", "Response Time", "Web Service", "Actions"]
@@ -866,8 +869,8 @@ class NetworkMonitorApp:
                 text=header,
                 font=ctk.CTkFont(weight="bold")
             )
-            if i == 0:  # Center the "Select" header
-                label.grid(row=0, column=i, padx=5, pady=5)
+            if i == 0:  # Left-justify the "Select" header to match checkbox alignment
+                label.grid(row=0, column=i, padx=5, pady=5, sticky="w")
             else:
                 label.grid(row=0, column=i, padx=5, pady=5, sticky="ew")
         
@@ -1102,7 +1105,7 @@ class NetworkMonitorApp:
         row_num = len(self.device_rows) + 1
         row_widgets = []
         
-        # Select checkbox - directly centered in grid
+        # Select checkbox - left-aligned
         var = tk.BooleanVar()
         checkbox = ctk.CTkCheckBox(
             self.table_frame, 
@@ -1110,23 +1113,14 @@ class NetworkMonitorApp:
             variable=var,
             command=lambda: self.toggle_device_selection(device, var.get())
         )
-        checkbox.grid(row=row_num, column=0, padx=5, pady=2, sticky="")
+        checkbox.grid(row=row_num, column=0, padx=5, pady=2, sticky="w")
         row_widgets.append(checkbox)
         
-        # IP Address (clickable for nmap)
-        ip_btn = ctk.CTkButton(
-            self.table_frame,
-            text=device['ip'],
-            width=120,
-            height=24,
-            fg_color="transparent",
-            text_color=("gray10", "gray90"),
-            hover_color=("gray80", "gray20"),
-            command=lambda: self.show_nmap_dialog(device['ip'])
-        )
-        ip_btn.grid(row=row_num, column=1, padx=5, pady=2, sticky="ew")
-        row_widgets.append(ip_btn)
-        
+        # IP Address
+        ip_label = ctk.CTkLabel(self.table_frame, text=device['ip'])
+        ip_label.grid(row=row_num, column=1, padx=5, pady=2)
+        row_widgets.append(ip_label)
+
         # MAC Address
         mac_label = ctk.CTkLabel(self.table_frame, text=device.get('mac', 'Unknown'))
         mac_label.grid(row=row_num, column=2, padx=5, pady=2)
@@ -1182,16 +1176,7 @@ class NetworkMonitorApp:
         row_widgets.append(actions_btn)
         
         self.device_rows.append(row_widgets)
-        
-        # Configure column weights
-        for i in range(8):
-            if i == 0:  # Select column - fixed width, no expansion
-                self.table_frame.grid_columnconfigure(i, weight=0, minsize=80)
-            elif i == 1:  # IP column - expandable
-                self.table_frame.grid_columnconfigure(i, weight=1)
-            else:
-                self.table_frame.grid_columnconfigure(i, weight=0)
-    
+
     def toggle_device_selection(self, device, selected):
         """Toggle device selection for monitoring"""
         if selected:
@@ -2066,6 +2051,19 @@ Built with CustomTkinter, psutil, scapy, speedtest-cli
     
     def update_graph_status(self, ip, latency, status, timestamp):
         """Update graph status labels"""
+        # Send email alert if latency exceeds threshold from settings
+        from email_alert_manager import email_alert_manager
+        from settings import settings_manager
+        alert_settings = settings_manager.settings.alerts
+        threshold = getattr(alert_settings, 'email_threshold_ms', 1000)  # Use alert settings threshold
+        print(f"[DEBUG] Checking alert: latency={latency}ms, threshold={threshold}ms, status={status}")
+        if status == 'up' and not math.isnan(latency) and latency > threshold:
+            device_info = None
+            if hasattr(self, 'device_info_map') and ip in self.device_info_map:
+                device_info = self.device_info_map[ip]
+            print(f"[DEBUG] Sending alert for {ip}: latency={latency}ms > threshold={threshold}ms")
+            email_alert_manager.check_and_send_alert(ip, latency, status, device_info)
+
         def _update_on_main_thread():
             if ip not in self.monitor_graphs:
                 return

@@ -7,6 +7,8 @@ Handles real-time device monitoring with graphical display
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox, filedialog
+from settings import settings_manager
+from email_alert_manager import email_alert_manager
 import threading
 import time
 import subprocess
@@ -295,6 +297,7 @@ class LiveMonitor:
 
         self.current_monitor_window = monitor_window
         self.monitor_graphs = {}
+        self.device_info = {}  # Store device information for alerts
 
         for i, device in enumerate(selected_devices):
             row = i // cols
@@ -355,6 +358,14 @@ class LiveMonitor:
             stats_label.pack(side="right", padx=10, pady=5)
             self.monitor_graphs[ip]['status_label'] = status_label
             self.monitor_graphs[ip]['stats_label'] = stats_label
+            
+            # Store device information for alert context
+            self.device_info[ip] = {
+                'hostname': device.get('hostname', 'Unknown'),
+                'manufacturer': device.get('manufacturer', 'Unknown'),
+                'mac': device.get('mac', 'Unknown')
+            }
+            
             if ip not in self.device_monitors:
                 monitor = DeviceMonitor(ip, interval=1)
                 monitor.start(
@@ -498,8 +509,23 @@ class LiveMonitor:
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to export data: {e}")
 
+    def check_alert_thresholds(self, ip, latency, status):
+        """Check if the latency or status exceeds thresholds and send an alert"""
+        # Get device info for the alert
+        device_info = self.device_info.get(ip, {
+            'hostname': 'Unknown',
+            'manufacturer': 'Unknown',
+            'mac': 'Unknown'
+        })
+        
+        # Use the email alert manager to check and send alerts
+        email_alert_manager.check_and_send_alert(ip, latency, status, device_info)
+
     def update_graph_status(self, ip, latency, status, timestamp):
         """Update graph status labels"""
+        # Check for alert thresholds
+        self.check_alert_thresholds(ip, latency, status)
+        
         def _update_on_main_thread():
             if ip not in self.monitor_graphs:
                 return

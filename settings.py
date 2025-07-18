@@ -71,19 +71,22 @@ class AlertSettings:
     """Alert and notification settings"""
     enable_sound: bool = True
     enable_desktop_notifications: bool = True
+    alert_types: dict = None
+    
+    # Email notification settings
     email_notifications: bool = False
     email_settings: dict = None
-    alert_types: dict = None
+    email_recipient_list: list = None
+    email_threshold_ms: int = 1000
+    email_consecutive_failures: int = 3
+    email_cooldown_minutes: int = 15
+    email_batch_alerts: bool = True
+    email_batch_interval_minutes: int = 5
+    email_send_reports: bool = False
+    email_report_interval_hours: int = 24
+    email_subject_template: str = "[Network Monitor] Alert: {alert_type}"
 
     def __post_init__(self):
-        if self.email_settings is None:
-            self.email_settings = {
-                "smtp_server": "",
-                "smtp_port": 587,
-                "username": "",
-                "password": "",
-                "use_tls": True
-            }
         if self.alert_types is None:
             self.alert_types = {
                 "device_down": True,
@@ -91,6 +94,19 @@ class AlertSettings:
                 "new_device": True,
                 "network_change": True
             }
+        if self.email_settings is None:
+            self.email_settings = {
+                "smtp_server": "",
+                "smtp_port": 587,
+                "username": "",
+                "password": "",
+                "use_tls": True,
+                "use_ssl": False,
+                "from_address": "",
+                "from_name": "Network Monitor"
+            }
+        if self.email_recipient_list is None:
+            self.email_recipient_list = []
 
 
 @dataclass

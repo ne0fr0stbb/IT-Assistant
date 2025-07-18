@@ -9,6 +9,8 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 from settings import settings_manager, ApplicationSettings
 from typing import Dict, Any, Callable
+from email_tester import email_tester
+from email_test_dialog import show_email_test_results, show_email_test_progress
 
 
 class SettingsDialog:
@@ -28,15 +30,15 @@ class SettingsDialog:
         """Create the main dialog window"""
         self.dialog = ctk.CTkToplevel(self.parent)
         self.dialog.title("Network Monitor Settings")
-        self.dialog.geometry("800x600")
+        self.dialog.geometry("900x700")
         self.dialog.transient(self.parent)
         self.dialog.grab_set()
 
         # Center the dialog
         self.dialog.update_idletasks()
-        x = (self.dialog.winfo_screenwidth() // 2) - (800 // 2)
-        y = (self.dialog.winfo_screenheight() // 2) - (600 // 2)
-        self.dialog.geometry(f"800x600+{x}+{y}")
+        x = (self.dialog.winfo_screenwidth() // 2) - (900 // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (700 // 2)
+        self.dialog.geometry(f"900x700+{x}+{y}")
 
         # Configure grid
         self.dialog.grid_columnconfigure(0, weight=1)
@@ -64,48 +66,54 @@ class SettingsDialog:
         button_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
 
         # Buttons
-        ctk.CTkButton(
+        reset_btn = ctk.CTkButton(
             button_frame,
             text="Reset to Defaults",
             command=self.reset_to_defaults,
             width=120
-        ).pack(side="left", padx=5, pady=10)
+        )
+        reset_btn.pack(side="left", padx=5, pady=10)
 
-        ctk.CTkButton(
+        export_btn = ctk.CTkButton(
             button_frame,
             text="Export Settings",
             command=self.export_settings,
             width=120
-        ).pack(side="left", padx=5, pady=10)
+        )
+        export_btn.pack(side="left", padx=5, pady=10)
 
-        ctk.CTkButton(
+        import_btn = ctk.CTkButton(
             button_frame,
             text="Import Settings",
             command=self.import_settings,
             width=120
-        ).pack(side="left", padx=5, pady=10)
+        )
+        import_btn.pack(side="left", padx=5, pady=10)
 
         # Right side buttons
-        ctk.CTkButton(
+        cancel_btn = ctk.CTkButton(
             button_frame,
             text="Cancel",
             command=self.cancel,
             width=100
-        ).pack(side="right", padx=5, pady=10)
+        )
+        cancel_btn.pack(side="right", padx=5, pady=10)
 
-        ctk.CTkButton(
+        apply_btn = ctk.CTkButton(
             button_frame,
             text="Apply",
             command=self.apply_settings,
             width=100
-        ).pack(side="right", padx=5, pady=10)
+        )
+        apply_btn.pack(side="right", padx=5, pady=10)
 
-        ctk.CTkButton(
+        ok_btn = ctk.CTkButton(
             button_frame,
             text="OK",
             command=self.ok,
             width=100
-        ).pack(side="right", padx=5, pady=10)
+        )
+        ok_btn.pack(side="right", padx=5, pady=10)
 
     def create_scan_tab(self):
         """Create scanning settings tab"""
@@ -440,12 +448,196 @@ class SettingsDialog:
             "switch"
         )
 
+        # Email Configuration section
+        email_config_frame = ctk.CTkFrame(scroll_frame)
+        email_config_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        email_config_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(email_config_frame, text="Email Configuration:", font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=5, pady=5
+        )
+
+        # SMTP Server
+        self.create_email_setting_row(
+            email_config_frame, 1,
+            "SMTP Server:",
+            "SMTP server address",
+            "alerts_smtp_server",
+            "entry",
+            placeholder="smtp.gmail.com"
+        )
+
+        # SMTP Port
+        self.create_email_setting_row(
+            email_config_frame, 2,
+            "SMTP Port:",
+            "SMTP server port",
+            "alerts_smtp_port",
+            "spinbox",
+            range_values=(1, 65535)
+        )
+
+        # Username
+        self.create_email_setting_row(
+            email_config_frame, 3,
+            "Username:",
+            "SMTP username/email",
+            "alerts_smtp_username",
+            "entry",
+            placeholder="user@example.com"
+        )
+
+        # Password
+        self.create_email_setting_row(
+            email_config_frame, 4,
+            "Password:",
+            "SMTP password",
+            "alerts_smtp_password",
+            "entry",
+            show="*"
+        )
+
+        # Use TLS
+        self.create_email_setting_row(
+            email_config_frame, 5,
+            "Use TLS:",
+            "Enable TLS encryption",
+            "alerts_smtp_tls",
+            "switch"
+        )
+
+        # From Address
+        self.create_email_setting_row(
+            email_config_frame, 6,
+            "From Address:",
+            "Sender email address",
+            "alerts_from_address",
+            "entry",
+            placeholder="monitor@example.com"
+        )
+
+        # Test Email Configuration button
+        test_email_btn = ctk.CTkButton(
+            email_config_frame,
+            text="Test Email Configuration",
+            command=self.test_email_configuration,
+            width=200
+        )
+        test_email_btn.grid(row=7, column=0, columnspan=3, pady=10)
+
+        # Email Recipients
+        email_recipients_frame = ctk.CTkFrame(scroll_frame)
+        email_recipients_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        email_recipients_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(email_recipients_frame, text="Email Recipients:", font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=5, pady=5
+        )
+
+        self.recipients_text = ctk.CTkTextbox(email_recipients_frame, height=80)
+        self.recipients_text.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
+        self.setting_vars["alerts_email_recipients"] = self.recipients_text
+
+        ctk.CTkLabel(email_recipients_frame, text="One email per line", font=ctk.CTkFont(size=10)).grid(
+            row=1, column=1, sticky="w", padx=5, pady=2
+        )
+
+        # Email Alert Thresholds section
+        email_thresholds_frame = ctk.CTkFrame(scroll_frame)
+        email_thresholds_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        email_thresholds_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(email_thresholds_frame, text="Email Alert Thresholds:", font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=5, pady=5
+        )
+
+        # Email Threshold
+        self.create_email_setting_row(
+            email_thresholds_frame, 1,
+            "Email Threshold (ms):",
+            "Latency threshold for email alerts",
+            "alerts_email_threshold_ms",
+            "spinbox",
+            range_values=(100, 10000),
+            increment=100
+        )
+
+        # Consecutive Failures
+        self.create_email_setting_row(
+            email_thresholds_frame, 2,
+            "Consecutive Failures:",
+            "Number of consecutive failures before email",
+            "alerts_email_consecutive_failures",
+            "spinbox",
+            range_values=(1, 10)
+        )
+
+        # Cooldown Period
+        self.create_email_setting_row(
+            email_thresholds_frame, 3,
+            "Cooldown Period (min):",
+            "Minutes between emails for same device",
+            "alerts_email_cooldown_minutes",
+            "spinbox",
+            range_values=(1, 120),
+            increment=5
+        )
+
+        # Batch Alerts
+        self.create_email_setting_row(
+            email_thresholds_frame, 4,
+            "Batch Alerts:",
+            "Combine multiple alerts into single email",
+            "alerts_email_batch_alerts",
+            "switch"
+        )
+
+        # Batch Interval
+        self.create_email_setting_row(
+            email_thresholds_frame, 5,
+            "Batch Interval (min):",
+            "Minutes to wait before sending batched alerts",
+            "alerts_email_batch_interval_minutes",
+            "spinbox",
+            range_values=(1, 60)
+        )
+
+        # Send Reports
+        self.create_email_setting_row(
+            email_thresholds_frame, 6,
+            "Send Reports:",
+            "Send periodic monitoring reports",
+            "alerts_email_send_reports",
+            "switch"
+        )
+
+        # Report Interval
+        self.create_email_setting_row(
+            email_thresholds_frame, 7,
+            "Report Interval (hours):",
+            "Hours between periodic reports",
+            "alerts_email_report_interval_hours",
+            "spinbox",
+            range_values=(1, 168),
+            increment=1
+        )
+
+        # Subject Template
+        self.create_email_setting_row(
+            email_thresholds_frame, 8,
+            "Subject Template:",
+            "Email subject template ({alert_type} will be replaced)",
+            "alerts_email_subject_template",
+            "entry",
+            placeholder="[Network Monitor] Alert: {alert_type}"
+        )
+
         # Alert Types section
         alert_types_frame = ctk.CTkFrame(scroll_frame)
-        alert_types_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
+        alert_types_frame.grid(row=6, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
 
-        ctk.CTkLabel(alert_types_frame, text="Alert Types:", font=ctk.CTkFont(weight="bold")).pack(
-            anchor="w", padx=5, pady=5
+        ctk.CTkLabel(alert_types_frame, text="Alert Types:", font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=5, pady=5
         )
 
         alert_types = [
@@ -463,7 +655,7 @@ class SettingsDialog:
                 alert_types_frame,
                 text=label,
                 variable=var
-            ).pack(anchor="w", padx=20, pady=2)
+            ).grid(row=i+1, column=0, sticky="w", padx=20, pady=2)
 
     def create_setting_row(self, parent, row, label_text, description, key, widget_type, **kwargs):
         """Create a standardized setting row"""
@@ -488,6 +680,38 @@ class SettingsDialog:
         elif widget_type == "combobox":
             var = tk.StringVar()
             widget = ctk.CTkComboBox(parent, variable=var, values=kwargs.get("values", []))
+
+        widget.grid(row=row, column=1, sticky="ew", padx=5, pady=5)
+        self.setting_vars[key] = var
+
+        # Description
+        desc_label = ctk.CTkLabel(parent, text=description, font=ctk.CTkFont(size=10))
+        desc_label.grid(row=row, column=2, sticky="w", padx=5, pady=5)
+
+        # Configure column weights
+        parent.grid_columnconfigure(1, weight=1)
+
+    def create_email_setting_row(self, parent, row, label_text, description, key, widget_type, **kwargs):
+        """Create a standardized email setting row"""
+        # Label
+        label = ctk.CTkLabel(parent, text=label_text, font=ctk.CTkFont(weight="bold"))
+        label.grid(row=row, column=0, sticky="w", padx=5, pady=5)
+
+        # Widget
+        if widget_type == "entry":
+            var = tk.StringVar()
+            show = kwargs.get("show", None)
+            widget = ctk.CTkEntry(parent, textvariable=var, 
+                                placeholder_text=kwargs.get("placeholder", ""),
+                                show=show if show else None)
+
+        elif widget_type == "spinbox":
+            var = tk.DoubleVar() if kwargs.get("increment", 1) != 1 else tk.IntVar()
+            widget = ctk.CTkEntry(parent, textvariable=var, width=100)
+
+        elif widget_type == "switch":
+            var = tk.BooleanVar()
+            widget = ctk.CTkSwitch(parent, text="", variable=var)
 
         widget.grid(row=row, column=1, sticky="ew", padx=5, pady=5)
         self.setting_vars[key] = var
@@ -544,6 +768,29 @@ class SettingsDialog:
         self.setting_vars["alerts_enable_sound"].set(self.settings.alerts.enable_sound)
         self.setting_vars["alerts_enable_desktop_notifications"].set(self.settings.alerts.enable_desktop_notifications)
         self.setting_vars["alerts_email_notifications"].set(self.settings.alerts.email_notifications)
+
+        # Email configuration settings
+        self.setting_vars["alerts_smtp_server"].set(self.settings.alerts.email_settings["smtp_server"])
+        self.setting_vars["alerts_smtp_port"].set(self.settings.alerts.email_settings["smtp_port"])
+        self.setting_vars["alerts_smtp_username"].set(self.settings.alerts.email_settings["username"])
+        self.setting_vars["alerts_smtp_password"].set(self.settings.alerts.email_settings["password"])
+        self.setting_vars["alerts_smtp_tls"].set(self.settings.alerts.email_settings["use_tls"])
+        self.setting_vars["alerts_from_address"].set(self.settings.alerts.email_settings["from_address"])
+
+        # Email recipients
+        recipients_text = "\n".join(self.settings.alerts.email_recipient_list)
+        self.setting_vars["alerts_email_recipients"].delete("1.0", "end")
+        self.setting_vars["alerts_email_recipients"].insert("1.0", recipients_text)
+
+        # Email alert thresholds
+        self.setting_vars["alerts_email_threshold_ms"].set(self.settings.alerts.email_threshold_ms)
+        self.setting_vars["alerts_email_consecutive_failures"].set(self.settings.alerts.email_consecutive_failures)
+        self.setting_vars["alerts_email_cooldown_minutes"].set(self.settings.alerts.email_cooldown_minutes)
+        self.setting_vars["alerts_email_batch_alerts"].set(self.settings.alerts.email_batch_alerts)
+        self.setting_vars["alerts_email_batch_interval_minutes"].set(self.settings.alerts.email_batch_interval_minutes)
+        self.setting_vars["alerts_email_send_reports"].set(self.settings.alerts.email_send_reports)
+        self.setting_vars["alerts_email_report_interval_hours"].set(self.settings.alerts.email_report_interval_hours)
+        self.setting_vars["alerts_email_subject_template"].set(self.settings.alerts.email_subject_template)
 
         # Alert types
         self.setting_vars["alerts_device_down"].set(self.settings.alerts.alert_types["device_down"])
@@ -605,6 +852,34 @@ class SettingsDialog:
             settings_manager.update_setting("alerts", "enable_desktop_notifications", self.setting_vars["alerts_enable_desktop_notifications"].get())
             settings_manager.update_setting("alerts", "email_notifications", self.setting_vars["alerts_email_notifications"].get())
 
+            # Email configuration settings
+            email_settings = {
+                "smtp_server": self.setting_vars["alerts_smtp_server"].get(),
+                "smtp_port": self.setting_vars["alerts_smtp_port"].get(),
+                "username": self.setting_vars["alerts_smtp_username"].get(),
+                "password": self.setting_vars["alerts_smtp_password"].get(),
+                "use_tls": self.setting_vars["alerts_smtp_tls"].get(),
+                "use_ssl": False,
+                "from_address": self.setting_vars["alerts_from_address"].get(),
+                "from_name": "Network Monitor"
+            }
+            settings_manager.update_setting("alerts", "email_settings", email_settings)
+
+            # Email recipients
+            recipients_text = self.setting_vars["alerts_email_recipients"].get("1.0", "end-1c")
+            recipients_list = [line.strip() for line in recipients_text.split("\n") if line.strip()]
+            settings_manager.update_setting("alerts", "email_recipient_list", recipients_list)
+
+            # Email alert thresholds
+            settings_manager.update_setting("alerts", "email_threshold_ms", self.setting_vars["alerts_email_threshold_ms"].get())
+            settings_manager.update_setting("alerts", "email_consecutive_failures", self.setting_vars["alerts_email_consecutive_failures"].get())
+            settings_manager.update_setting("alerts", "email_cooldown_minutes", self.setting_vars["alerts_email_cooldown_minutes"].get())
+            settings_manager.update_setting("alerts", "email_batch_alerts", self.setting_vars["alerts_email_batch_alerts"].get())
+            settings_manager.update_setting("alerts", "email_batch_interval_minutes", self.setting_vars["alerts_email_batch_interval_minutes"].get())
+            settings_manager.update_setting("alerts", "email_send_reports", self.setting_vars["alerts_email_send_reports"].get())
+            settings_manager.update_setting("alerts", "email_report_interval_hours", self.setting_vars["alerts_email_report_interval_hours"].get())
+            settings_manager.update_setting("alerts", "email_subject_template", self.setting_vars["alerts_email_subject_template"].get())
+
             # Alert types
             alert_types = {
                 "device_down": self.setting_vars["alerts_device_down"].get(),
@@ -665,6 +940,84 @@ class SettingsDialog:
                 messagebox.showinfo("Import", "Settings imported successfully!")
             else:
                 messagebox.showerror("Import", "Failed to import settings")
+    
+    def test_email_configuration(self):
+        """Test the current email configuration"""
+        try:
+            # Check if test is already in progress
+            if email_tester.is_test_in_progress():
+                messagebox.showwarning("Test in Progress", "Email test is already in progress. Please wait for it to complete.")
+                return
+            
+            # Get current email configuration from dialog
+            email_config = {
+                "smtp_server": self.setting_vars["alerts_smtp_server"].get(),
+                "smtp_port": self.setting_vars["alerts_smtp_port"].get(),
+                "username": self.setting_vars["alerts_smtp_username"].get(),
+                "password": self.setting_vars["alerts_smtp_password"].get(),
+                "use_tls": self.setting_vars["alerts_smtp_tls"].get(),
+                "use_ssl": False,
+                "from_address": self.setting_vars["alerts_from_address"].get(),
+                "from_name": "Network Monitor"
+            }
+            
+            # Get recipients
+            recipients_text = self.setting_vars["alerts_email_recipients"].get("1.0", "end-1c")
+            recipients = [line.strip() for line in recipients_text.split("\n") if line.strip()]
+            
+            # Basic validation
+            if not email_config["smtp_server"]:
+                messagebox.showerror("Configuration Error", "SMTP server is required")
+                return
+            
+            if not email_config["username"]:
+                messagebox.showerror("Configuration Error", "Username is required")
+                return
+            
+            if not email_config["password"]:
+                messagebox.showerror("Configuration Error", "Password is required")
+                return
+            
+            if not email_config["from_address"]:
+                messagebox.showerror("Configuration Error", "From address is required")
+                return
+            
+            if not recipients:
+                messagebox.showerror("Configuration Error", "At least one recipient is required")
+                return
+            
+            # Show progress dialog
+            progress_dialog = show_email_test_progress(self.dialog)
+            progress_dialog.set_cancel_callback(lambda: email_tester.cancel_test())
+            
+            # Create test callback
+            def test_callback(message, results=None):
+                if results:
+                    # Test completed
+                    progress_dialog.close_dialog()
+                    show_email_test_results(self.dialog, results)
+                else:
+                    # Progress update
+                    progress_steps = {
+                        "Validating email configuration...": 0.1,
+                        "Testing DNS resolution and connectivity...": 0.3,
+                        "Establishing SMTP connection...": 0.5,
+                        "Testing SMTP authentication...": 0.7,
+                        "Sending test email...": 0.9,
+                        "Test completed": 1.0
+                    }
+                    progress = progress_steps.get(message, 0.5)
+                    progress_dialog.update_progress(message, progress)
+            
+            # Start the test
+            result = email_tester.test_email_configuration(email_config, recipients, test_callback)
+            
+            if not result["success"]:
+                progress_dialog.close_dialog()
+                messagebox.showerror("Test Error", result["error"])
+            
+        except Exception as e:
+            messagebox.showerror("Test Error", f"Failed to start email test: {str(e)}")
 
 
 def show_settings_dialog(parent, callback=None):
