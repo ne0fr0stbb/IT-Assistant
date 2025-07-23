@@ -550,7 +550,7 @@ class NetworkMonitorApp:
         self.root = ctk.CTk()
         self.root.title("I.T Assistant - Network Monitor")
         self.root.geometry(f"{saved_width}x{saved_height}")
-        self.root.minsize(900, 600)
+        self.root.minsize(1200, 800)  # Increased minimum size to ensure all buttons fit
         
         # Bind window resize event to save size
         self.root.bind("<Configure>", self.on_window_resize)
@@ -581,6 +581,9 @@ class NetworkMonitorApp:
         
         # Auto-detect network
         self.auto_detect_network()
+        
+        # Start a thread to get external IP
+        threading.Thread(target=self.get_external_ip, daemon=True).start()
     
     def on_window_resize(self, event):
         """Handle window resize event to save size"""
@@ -600,8 +603,9 @@ class NetworkMonitorApp:
 
     def setup_ui(self):
         """Setup main UI"""
-        # Configure grid
-        self.root.grid_columnconfigure(1, weight=1)
+        # Configure grid with fixed sidebar and flexible main content
+        self.root.grid_columnconfigure(0, weight=0, minsize=280)  # Sidebar: fixed width 280px
+        self.root.grid_columnconfigure(1, weight=1)  # Main content: takes remaining space
         self.root.grid_rowconfigure(0, weight=1)
         
         # Create sidebar
@@ -612,7 +616,9 @@ class NetworkMonitorApp:
         
         # Create status bar
         self.create_status_bar()
-    
+
+    # Remove the complex window configure handler since we're using proportional sizing
+
     def setup_menu(self):
         """Setup custom themed menubar using CustomTkinter"""
         # Create custom menubar frame with proper padding configuration
@@ -680,9 +686,12 @@ class NetworkMonitorApp:
 
     def create_sidebar(self):
         """Create sidebar with controls"""
+        # Create sidebar with fixed width
         self.sidebar = ctk.CTkFrame(self.root, width=280, corner_radius=0)
         self.sidebar.grid(row=1, column=0, rowspan=2, sticky="nsew")
-        self.sidebar.grid_rowconfigure(7, weight=1)  # Flexible space after tools
+        self.sidebar.grid_rowconfigure(7, weight=1)  # Flexible space after network info
+        self.sidebar.grid_columnconfigure(0, weight=1)  # Allow content to expand horizontally
+        self.sidebar.grid_propagate(False)  # Maintain fixed width
 
         # Logo
         try:
@@ -699,87 +708,126 @@ class NetworkMonitorApp:
             logo_image = ctk.CTkImage(
                 light_image=Image.open(logo_path),
                 dark_image=Image.open(logo_path),
-                size=(80, 80)
+                size=(60, 60)  # Reduced from 80x80
             )
             logo_label = ctk.CTkLabel(
                 self.sidebar,
                 image=logo_image,
                 text=""
             )
-            logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+            logo_label.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")  # Reduced padding
         except Exception as e:
             print(f"Could not load logo: {e}")
             # Fallback - create empty space
-            logo_label = ctk.CTkLabel(self.sidebar, text="", height=80)
-            logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
+            logo_label = ctk.CTkLabel(self.sidebar, text="", height=60)  # Reduced height
+            logo_label.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")  # Reduced padding
 
         # Title
         title_label = ctk.CTkLabel(
             self.sidebar, 
             text="I.T Assistant",
-            font=ctk.CTkFont(size=24, weight="bold")
+            font=ctk.CTkFont(size=18, weight="bold")  # Reduced font size
         )
-        title_label.grid(row=1, column=0, padx=20, pady=(10, 5))
+        title_label.grid(row=1, column=0, padx=10, pady=(4, 2), sticky="ew")  # Reduced padding
 
         subtitle_label = ctk.CTkLabel(
             self.sidebar, 
             text="Network Monitor",
-            font=ctk.CTkFont(size=16)
+            font=ctk.CTkFont(size=13)  # Reduced font size
         )
-        subtitle_label.grid(row=2, column=0, padx=20, pady=(0, 20))
+        subtitle_label.grid(row=2, column=0, padx=10, pady=(0, 10), sticky="ew")  # Reduced padding
 
         # Network settings frame
         network_frame = ctk.CTkFrame(self.sidebar)
-        network_frame.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
+        network_frame.grid(row=3, column=0, padx=8, pady=8, sticky="ew")
         network_frame.grid_columnconfigure(0, weight=1)
         
-        ctk.CTkLabel(network_frame, text="Network Range:", 
-                    font=ctk.CTkFont(weight="bold")).pack(padx=10, pady=(10, 5))
+        ctk.CTkLabel(network_frame, text="Network:",
+                    font=ctk.CTkFont(size=13, weight="bold")).pack(padx=8, pady=(8, 4))
         
+        # Network Interface dropdown
+        ctk.CTkLabel(network_frame, text="Interface:",
+                    font=ctk.CTkFont(size=12)).pack(padx=10, pady=(5, 2), anchor="w")
+
+        # Get available interfaces
+        self.available_interfaces, active_interface = self.get_network_interfaces()
+
+        # Create dropdown options
+        interface_options = ["Auto-Detect"]
+        if self.available_interfaces:
+            interface_options.extend([interface['display'] for interface in self.available_interfaces])
+
+        # Set default selection (active interface or auto-detect)
+        default_selection = "Auto-Detect"
+        if active_interface:
+            default_selection = active_interface['display']
+
+        self.interface_dropdown = ctk.CTkComboBox(
+            network_frame,
+            values=interface_options,
+            command=self.on_interface_selected,
+            state="readonly"
+        )
+        self.interface_dropdown.set(default_selection)
+        self.interface_dropdown.pack(padx=10, pady=(2, 10), fill="x")
+
+        # Network Range entry
+        ctk.CTkLabel(network_frame, text="Network Range:",
+                    font=ctk.CTkFont(size=12)).pack(padx=10, pady=(5, 2), anchor="w")
+
         self.ip_input = ctk.CTkEntry(network_frame, placeholder_text="192.168.1.0/24")
-        self.ip_input.pack(padx=10, pady=5, fill="x")
-        
+        self.ip_input.pack(padx=10, pady=(2, 10), fill="x")
+
         self.auto_detect_btn = ctk.CTkButton(
             network_frame,
             text="Auto-Detect",
             command=self.auto_detect_network,
-            height=32
+            height=28
         )
-        self.auto_detect_btn.pack(padx=10, pady=(5, 10), fill="x")
+        self.auto_detect_btn.pack(padx=8, pady=(4, 4), fill="x")
+        
+        # Network Scan button (moved from tools frame)
+        self.scan_btn = ctk.CTkButton(
+            network_frame,
+            text="Network Scan",
+            command=self.toggle_scan,
+            height=28
+        )
+        self.scan_btn.pack(padx=8, pady=(4, 8), fill="x")
         
         # Search frame
         search_frame = ctk.CTkFrame(self.sidebar)
-        search_frame.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
+        search_frame.grid(row=4, column=0, padx=8, pady=8, sticky="ew")
         search_frame.grid_columnconfigure(0, weight=1)
         
         ctk.CTkLabel(search_frame, text="Search Devices:", 
-                    font=ctk.CTkFont(weight="bold")).pack(padx=10, pady=(10, 5))
+                    font=ctk.CTkFont(size=13, weight="bold")).pack(padx=8, pady=(8, 4))
         
-        self.search_input = ctk.CTkEntry(search_frame, placeholder_text="IP, MAC, or hostname...")
-        self.search_input.pack(padx=10, pady=(5, 10), fill="x")
-        self.search_input.bind("<KeyRelease>", self.filter_devices)
-        
+        # Create a sub-frame for the entry and button
+        search_input_frame = ctk.CTkFrame(search_frame)
+        search_input_frame.pack(padx=10, pady=(5, 10), fill="x")
+        search_input_frame.grid_columnconfigure(0, weight=1)
+
+        self.search_input = ctk.CTkEntry(search_input_frame, placeholder_text="IP, MAC, or hostname...")
+        self.search_input.grid(row=0, column=0, padx=(0, 5), pady=5, sticky="ew")
+        # Remove the automatic search on typing and add Enter key binding
+        self.search_input.bind("<Return>", lambda event: self.perform_search())
+
+        # Add search button
+        search_button = ctk.CTkButton(search_input_frame, text="Search", width=70, height=28, command=self.perform_search)
+        search_button.grid(row=0, column=1, padx=(4, 0), pady=4)
+
         # Expanded Network Tools frame
         tools_frame = ctk.CTkFrame(self.sidebar)
-        tools_frame.grid(row=5, column=0, padx=20, pady=10, sticky="ew")
+        tools_frame.grid(row=5, column=0, padx=8, pady=8, sticky="ew")
         tools_frame.grid_columnconfigure(0, weight=1)
         
         ctk.CTkLabel(tools_frame, text="Network Tools", 
-                    font=ctk.CTkFont(size=14, weight="bold")).pack(padx=10, pady=(10, 5))
+                    font=ctk.CTkFont(size=13, weight="bold")).pack(padx=8, pady=(8, 4))
         
         # Standard button styling for all tools
-        button_height = 36
-        button_font = ctk.CTkFont(size=13, weight="bold")
-        
-        # Start Network Scan button
-        self.scan_btn = ctk.CTkButton(
-            tools_frame,
-            text="Network Scan",
-            command=self.toggle_scan,
-            height=button_height,
-            font=button_font
-        )
-        self.scan_btn.pack(padx=10, pady=5, fill="x")
+        button_height = 32  # Reduced height
+        button_font = ctk.CTkFont(size=12)  # Smaller font
         
         # Live Monitor Selected button
         self.live_monitor_btn = ctk.CTkButton(
@@ -789,7 +837,7 @@ class NetworkMonitorApp:
             height=button_height,
             font=button_font
         )
-        self.live_monitor_btn.pack(padx=10, pady=5, fill="x")
+        self.live_monitor_btn.pack(padx=8, pady=4, fill="x")
         
         # Nmap Scan Selected button
         self.nmap_scan_btn = ctk.CTkButton(
@@ -799,7 +847,7 @@ class NetworkMonitorApp:
             height=button_height,
             font=button_font
         )
-        self.nmap_scan_btn.pack(padx=10, pady=5, fill="x")
+        self.nmap_scan_btn.pack(padx=8, pady=4, fill="x")
 
         # Internet Speed Test button
         self.speedtest_btn = ctk.CTkButton(
@@ -809,16 +857,43 @@ class NetworkMonitorApp:
             height=button_height,
             font=button_font
         )
-        self.speedtest_btn.pack(padx=10, pady=(5, 15), fill="x")
+        self.speedtest_btn.pack(padx=8, pady=(4, 12), fill="x")
         
-        # Theme switch
-        self.theme_switch = ctk.CTkSwitch(
-            self.sidebar,
-            text="Dark Mode",
-            command=self.toggle_theme_via_switch
-        )
-        self.theme_switch.grid(row=6, column=0, padx=20, pady=10)
-        self.theme_switch.select()
+        # Network Information frame
+        info_frame = ctk.CTkFrame(self.sidebar)
+        info_frame.grid(row=6, column=0, padx=8, pady=8, sticky="ew")
+        info_frame.grid_columnconfigure(0, weight=1)
+        
+        ctk.CTkLabel(info_frame, text="Network Information", 
+                    font=ctk.CTkFont(size=13, weight="bold")).pack(padx=8, pady=(6, 3))  # Reduced padding
+        
+        # Create labels for network info with reduced padding
+        self.local_ip_label = ctk.CTkLabel(info_frame, text="Local IP: Detecting...", 
+                                          font=ctk.CTkFont(size=11), anchor="w")
+        self.local_ip_label.pack(padx=8, pady=1, fill="x")  # Reduced padding
+        
+        self.subnet_label = ctk.CTkLabel(info_frame, text="Subnet: Detecting...", 
+                                        font=ctk.CTkFont(size=11), anchor="w")
+        self.subnet_label.pack(padx=8, pady=1, fill="x")  # Reduced padding
+        
+        self.gateway_label = ctk.CTkLabel(info_frame, text="Gateway: Detecting...", 
+                                         font=ctk.CTkFont(size=11), anchor="w")
+        self.gateway_label.pack(padx=8, pady=1, fill="x")  # Reduced padding
+        
+        self.mac_label = ctk.CTkLabel(info_frame, text="MAC: Detecting...", 
+                                     font=ctk.CTkFont(size=11), anchor="w")
+        self.mac_label.pack(padx=8, pady=1, fill="x")  # Reduced padding
+        
+        self.external_ip_label = ctk.CTkLabel(info_frame, text="External IP: Detecting...", 
+                                             font=ctk.CTkFont(size=11), anchor="w")
+        self.external_ip_label.pack(padx=8, pady=1, fill="x")  # Reduced padding
+        
+        self.internet_status_label = ctk.CTkLabel(info_frame, text="Internet: Checking...", 
+                                                 font=ctk.CTkFont(size=11), anchor="w")
+        self.internet_status_label.pack(padx=8, pady=(1, 6), fill="x")  # Reduced padding
+        
+        # Update network information
+        self.update_network_information()
     
     def create_main_content(self):
         """Create main content area"""
@@ -1186,23 +1261,32 @@ class NetworkMonitorApp:
             if device in self.selected_devices:
                 self.selected_devices.remove(device)
     
-    def filter_devices(self, event=None):
-        """Filter devices based on search"""
-        query = self.search_input.get().lower()
-        
+    def perform_search(self):
+        """Perform device search"""
+        query = self.search_input.get().lower().strip()
+
         # Clear current table
         for row in self.device_rows:
             for widget in row:
                 widget.destroy()
         self.device_rows.clear()
         
-        # Re-add filtered devices
-        for device in self.all_devices:
-            if (query in device['ip'].lower() or 
-                query in device.get('mac', '').lower() or 
-                query in device.get('hostname', '').lower()):
+        if not query:
+            # If query is empty, re-add all devices
+            for device in self.all_devices:
                 self.add_device_to_table(device)
-    
+            self.update_status("Showing all devices")
+            return
+
+        # Re-add filtered devices with exact match
+        for device in self.all_devices:
+            if (query == device['ip'].lower() or
+                query == device.get('mac', '').lower() or
+                query == device.get('hostname', '').lower()):
+                self.add_device_to_table(device)
+
+        self.update_status(f"Search completed. Found {len(self.device_rows)} devices matching '{query}' (exact match)")
+
     def nmap_scan_selected(self):
         """Handle Nmap scan for selected devices"""
         if not NMAP_AVAILABLE:
@@ -1941,12 +2025,6 @@ Status: {device.get('status', 'Unknown')}
         if SETTINGS_AVAILABLE:
             set_theme(new_theme)
 
-        # Update theme switch state to match current theme
-        if new_theme == "dark":
-            self.theme_switch.select()
-        else:
-            self.theme_switch.deselect()
-
         # Update menubar button colors after theme change
         self.root.after(50, self.update_menubar_colors)
     
@@ -2183,14 +2261,254 @@ Built with CustomTkinter, psutil, scapy, speedtest-cli
         self.update_status("Ready to scan network")
         self.root.mainloop()
 
+    def update_network_information(self):
+        """Update the network information display in the sidebar"""
+        try:
+            # Get active network interface info
+            local_ip = None
+            subnet_mask = None
+            gateway = None
+            mac_address = None
+            internet_connected = False
+            
+            # Try to get local IP and check internet connection
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    internet_connected = True
+            except:
+                internet_connected = False
+            
+            # Get network interface details using psutil
+            if local_ip:
+                import psutil
+                
+                # Get subnet mask and MAC for the interface with our IP
+                for interface_name, addresses in psutil.net_if_addrs().items():
+                    for addr in addresses:
+                        if addr.family == socket.AF_INET and addr.address == local_ip:
+                            subnet_mask = addr.netmask
+                        elif addr.family == psutil.AF_LINK and hasattr(addr, 'address'):
+                            # Store MAC address for this interface
+                            if 'loopback' not in interface_name.lower():
+                                mac_address = addr.address
+                
+                # Get default gateway
+                try:
+                    gateways = psutil.net_if_stats()
+                    # On Windows, use route command to get gateway
+                    if platform.system().lower() == 'windows':
+                        result = subprocess.run(['route', 'print', '0.0.0.0'], 
+                                              capture_output=True, text=True, 
+                                              creationflags=subprocess.CREATE_NO_WINDOW)
+                        if result.returncode == 0:
+                            lines = result.stdout.split('\n')
+                            for line in lines:
+                                if '0.0.0.0' in line and local_ip in line:
+                                    parts = line.split()
+                                    if len(parts) >= 3:
+                                        gateway = parts[2]
+                                        break
+                    else:
+                        # Linux/Mac
+                        result = subprocess.run(['ip', 'route'], capture_output=True, text=True)
+                        if result.returncode == 0:
+                            lines = result.stdout.split('\n')
+                            for line in lines:
+                                if 'default' in line:
+                                    parts = line.split()
+                                    if 'via' in parts:
+                                        idx = parts.index('via')
+                                        if idx + 1 < len(parts):
+                                            gateway = parts[idx + 1]
+                                            break
+                except:
+                    pass
+            
+            # Update labels
+            if local_ip:
+                self.local_ip_label.configure(text=f"Local IP: {local_ip}")
+            else:
+                self.local_ip_label.configure(text="Local IP: Not connected")
+            
+            if subnet_mask:
+                self.subnet_label.configure(text=f"Subnet: {subnet_mask}")
+            else:
+                self.subnet_label.configure(text="Subnet: Unknown")
+            
+            if gateway:
+                self.gateway_label.configure(text=f"Gateway: {gateway}")
+            else:
+                self.gateway_label.configure(text="Gateway: Unknown")
+            
+            if mac_address:
+                self.mac_label.configure(text=f"MAC: {mac_address}")
+            else:
+                self.mac_label.configure(text="MAC: Unknown")
+            
+            # Internet status with color
+            if internet_connected:
+                self.internet_status_label.configure(text="Internet: Connected", text_color="#4CAF50")
+            else:
+                self.internet_status_label.configure(text="Internet: Disconnected", text_color="#F44336")
+                
+        except Exception as e:
+            print(f"Error updating network information: {e}")
+            self.local_ip_label.configure(text="Local IP: Error")
+            self.subnet_label.configure(text="Subnet: Error")
+            self.gateway_label.configure(text="Gateway: Error")
+            self.mac_label.configure(text="MAC: Error")
+            self.internet_status_label.configure(text="Internet: Error", text_color="#F44336")
+    
+    def get_external_ip(self):
+        """Get external IP address in a separate thread"""
+        try:
+            # Try multiple services for redundancy
+            services = [
+                'https://api.ipify.org',
+                'https://checkip.amazonaws.com',
+                'https://ifconfig.me/ip'
+            ]
+            
+            import urllib.request
+            for service in services:
+                try:
+                    with urllib.request.urlopen(service, timeout=5) as response:
+                        external_ip = response.read().decode('utf-8').strip()
+                        # Update label on main thread
+                        self.root.after(0, lambda: self.external_ip_label.configure(
+                            text=f"External IP: {external_ip}"))
+                        return
+                except:
+                    continue
+            
+            # If all services fail
+            self.root.after(0, lambda: self.external_ip_label.configure(
+                text="External IP: Unable to detect"))
+                
+        except Exception as e:
+            print(f"Error getting external IP: {e}")
+            self.root.after(0, lambda: self.external_ip_label.configure(
+                text="External IP: Error"))
+    
+    def get_network_interfaces(self):
+        """Get available network interfaces with their details"""
+        interfaces = []
+        active_interface = None
+
+        try:
+            import psutil
+            net_interfaces = psutil.net_if_addrs()
+            net_stats = psutil.net_if_stats()
+
+            # Get the current active interface (the one we're using for internet)
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    active_ip = s.getsockname()[0]
+            except:
+                active_ip = None
+
+            for interface_name, addresses in net_interfaces.items():
+                # Skip loopback interfaces
+                if 'loopback' in interface_name.lower() or interface_name.lower() == 'lo':
+                    continue
+
+                # Get interface statistics
+                stats = net_stats.get(interface_name)
+                if not stats or not stats.isup:
+                    continue
+
+                # Find IPv4 address
+                ipv4_addr = None
+                for addr in addresses:
+                    if addr.family == socket.AF_INET:  # IPv4
+                        ipv4_addr = addr.address
+                        break
+
+                if ipv4_addr and not ipv4_addr.startswith('127.') and not ipv4_addr.startswith('169.254.'):
+                    # Create network range for this interface
+                    ip_parts = ipv4_addr.split('.')
+                    network_range = f"{'.'.join(ip_parts[:3])}.0/24"
+
+                    interface_info = {
+                        'name': interface_name,
+                        'ip': ipv4_addr,
+                        'network': network_range,
+                        'display': f"{interface_name} ({ipv4_addr} - {network_range})"
+                    }
+
+                    interfaces.append(interface_info)
+
+                    # Check if this is the active interface
+                    if active_ip and ipv4_addr == active_ip:
+                        active_interface = interface_info
+
+            # If no active interface found, use the first one
+            if not active_interface and interfaces:
+                active_interface = interfaces[0]
+
+        except Exception as e:
+            print(f"Error detecting network interfaces: {e}")
+            # Fallback to basic detection
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    ip_parts = local_ip.split('.')
+                    network_range = f"{'.'.join(ip_parts[:3])}.0/24"
+
+                    fallback_interface = {
+                        'name': 'Auto-detected',
+                        'ip': local_ip,
+                        'network': network_range,
+                        'display': f"Auto-detected ({local_ip} - {network_range})"
+                    }
+                    interfaces = [fallback_interface]
+                    active_interface = fallback_interface
+            except:
+                pass
+
+        return interfaces, active_interface
+
+    def on_interface_selected(self, selection):
+        """Handle interface selection from dropdown"""
+        if selection == "Auto-Detect":
+            self.auto_detect_network()
+            return
+
+        # Find the selected interface
+        for interface in self.available_interfaces:
+            if interface['display'] == selection:
+                # Update the IP input with the network range
+                self.ip_input.delete(0, tk.END)
+                self.ip_input.insert(0, interface['network'])
+                self.update_status(f"Selected interface: {interface['name']} - {interface['network']}")
+                self.info_label.configure(text=f"Ready to scan network: {interface['network']}")
+                break
+
+
 def main():
-    """Main entry point"""
+    """Main entry point for the NetworkMonitor application"""
     try:
+        # Set the appearance mode and theme
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+
+        # Create and run the application
         app = NetworkMonitorApp()
         app.run()
+
+    except KeyboardInterrupt:
+        print("\nApplication interrupted by user")
+        sys.exit(0)
     except Exception as e:
-        print(f"Application error: {e}")
-        messagebox.showerror("Application Error", f"Failed to start application: {e}")
+        print(f"Error starting NetworkMonitor: {e}")
+        messagebox.showerror("Error", f"Failed to start NetworkMonitor:\n{e}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
+

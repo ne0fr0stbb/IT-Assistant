@@ -770,12 +770,12 @@ class SettingsDialog:
         self.setting_vars["alerts_email_notifications"].set(self.settings.alerts.email_notifications)
 
         # Email configuration settings
-        self.setting_vars["alerts_smtp_server"].set(self.settings.alerts.email_settings["smtp_server"])
-        self.setting_vars["alerts_smtp_port"].set(self.settings.alerts.email_settings["smtp_port"])
-        self.setting_vars["alerts_smtp_username"].set(self.settings.alerts.email_settings["username"])
-        self.setting_vars["alerts_smtp_password"].set(self.settings.alerts.email_settings["password"])
-        self.setting_vars["alerts_smtp_tls"].set(self.settings.alerts.email_settings["use_tls"])
-        self.setting_vars["alerts_from_address"].set(self.settings.alerts.email_settings["from_address"])
+        self.setting_vars["alerts_smtp_server"].set(self.settings.alerts.smtp_server)
+        self.setting_vars["alerts_smtp_port"].set(self.settings.alerts.smtp_port)
+        self.setting_vars["alerts_smtp_username"].set(self.settings.alerts.smtp_username)
+        self.setting_vars["alerts_smtp_password"].set(self.settings.alerts.smtp_password)
+        self.setting_vars["alerts_smtp_tls"].set(self.settings.alerts.smtp_tls)
+        self.setting_vars["alerts_from_address"].set(self.settings.alerts.from_address)
 
         # Email recipients
         recipients_text = "\n".join(self.settings.alerts.email_recipient_list)
@@ -852,18 +852,13 @@ class SettingsDialog:
             settings_manager.update_setting("alerts", "enable_desktop_notifications", self.setting_vars["alerts_enable_desktop_notifications"].get())
             settings_manager.update_setting("alerts", "email_notifications", self.setting_vars["alerts_email_notifications"].get())
 
-            # Email configuration settings
-            email_settings = {
-                "smtp_server": self.setting_vars["alerts_smtp_server"].get(),
-                "smtp_port": self.setting_vars["alerts_smtp_port"].get(),
-                "username": self.setting_vars["alerts_smtp_username"].get(),
-                "password": self.setting_vars["alerts_smtp_password"].get(),
-                "use_tls": self.setting_vars["alerts_smtp_tls"].get(),
-                "use_ssl": False,
-                "from_address": self.setting_vars["alerts_from_address"].get(),
-                "from_name": "Network Monitor"
-            }
-            settings_manager.update_setting("alerts", "email_settings", email_settings)
+            # Email configuration settings - save as individual properties
+            settings_manager.update_setting("alerts", "smtp_server", self.setting_vars["alerts_smtp_server"].get())
+            settings_manager.update_setting("alerts", "smtp_port", self.setting_vars["alerts_smtp_port"].get())
+            settings_manager.update_setting("alerts", "smtp_username", self.setting_vars["alerts_smtp_username"].get())
+            settings_manager.update_setting("alerts", "smtp_password", self.setting_vars["alerts_smtp_password"].get())
+            settings_manager.update_setting("alerts", "smtp_tls", self.setting_vars["alerts_smtp_tls"].get())
+            settings_manager.update_setting("alerts", "from_address", self.setting_vars["alerts_from_address"].get())
 
             # Email recipients
             recipients_text = self.setting_vars["alerts_email_recipients"].get("1.0", "end-1c")
