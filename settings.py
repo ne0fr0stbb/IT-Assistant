@@ -40,8 +40,8 @@ class MonitorSettings:
 class InterfaceSettings:
     """User interface configuration"""
     theme: str = "dark"  # "dark" or "light"
-    window_width: int = 1200
-    window_height: int = 800
+    window_width: int = 1100
+    window_height: int = 650
     sidebar_width: int = 280
     remember_window_size: bool = True
     auto_save_reports: bool = False

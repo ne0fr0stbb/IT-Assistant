@@ -198,15 +198,22 @@ class LiveMonitor:
         self.parent_app = parent_app
         self.device_monitors = {}
         self.monitor_graphs = {}
+        self.monitor_tooltips = {}
+        self.device_info = {}
         self.monitor_paused = False
         self.is_maximized = False
         self.current_monitor_window = None
+        self.minimized_monitor_window = None
 
     def open_live_monitor(self, selected_devices):
-        """Open live monitoring dialog with graphs"""
+        """Open live monitoring dialog with graphs - Grid layout with 4x2 max visible"""
         if not selected_devices:
             messagebox.showwarning("No Devices", "Please select at least one device to monitor.")
             return
+
+        # Close existing monitor window if open
+        if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
+            self.current_monitor_window.destroy()
 
         monitor_window = ctk.CTk()
         monitor_window.title("Live Device Monitoring - Real-time Graphs")
@@ -215,124 +222,171 @@ class LiveMonitor:
         screen_width = monitor_window.winfo_screenwidth()
         screen_height = monitor_window.winfo_screenheight()
 
-        max_height = int(screen_height * 0.9)
-        available_height = max_height - 150
-        optimal_height_per_device = min(350, available_height // device_count)
-        min_height_per_device = 200
-        if optimal_height_per_device < min_height_per_device:
-            height_per_device = min_height_per_device
-            window_height = max_height
-        else:
-            height_per_device = optimal_height_per_device
-            window_height = (device_count * height_per_device) + 150
+        # Dynamic grid layout based on device count
+        MAX_COLS = 4  # Maximum columns per row
 
-        if screen_width >= 1920:
-            window_width = 1400
-        elif screen_width >= 1600:
-            window_width = 1200
-        elif screen_width >= 1366:
-            window_width = 1000
+        # Determine optimal grid configuration
+        if device_count <= 2:
+            GRID_COLS = device_count  # 1 or 2 devices in single row
+        elif device_count <= 4:
+            GRID_COLS = min(device_count, MAX_COLS)  # Up to 4 in single row
         else:
-            window_width = min(screen_width - 100, 900)
+            GRID_COLS = MAX_COLS  # Use max columns for more than 4 devices
 
+        # Calculate window dimensions
+        # Each device graph should be at least 300px wide and 250px tall
+        MIN_DEVICE_WIDTH = 300
+        MIN_DEVICE_HEIGHT = 250
+
+        # Calculate window size based on actual grid columns needed
+        window_width = min(screen_width - 100, (GRID_COLS * MIN_DEVICE_WIDTH) + 60)
+
+        # Determine rows needed
+        total_rows = math.ceil(device_count / GRID_COLS)
+
+        # Only show second row if more than 4 devices
+        if device_count <= 4:
+            visible_rows = 1  # Always single row for 4 or fewer devices
+        else:
+            MAX_VISIBLE_ROWS = 2  # Show up to 2 rows for more than 4 devices
+            visible_rows = min(MAX_VISIBLE_ROWS, total_rows)
+
+        window_height = min(screen_height - 100, (visible_rows * MIN_DEVICE_HEIGHT) + 180)
+
+        # Center the window
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         monitor_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
         monitor_window.state('normal')
+
+        # Set matplotlib style for dark theme
         plt.style.use('dark_background')
 
-        if screen_width >= 1920:
-            max_cols = min(3, device_count)
-        elif screen_width >= 1400:
-            max_cols = min(2, device_count)
-        elif screen_width >= 1024:
-            max_cols = min(2, device_count)
-        else:
-            max_cols = 1
-        cols = min(max_cols, device_count)
-        rows = (device_count + cols - 1) // cols
-        min_graph_width = 600 if cols == 1 else 500
-        window_width = min(screen_width - 50, cols * min_graph_width + 60)
-        available_height_for_graphs = max_height - 180
-        if device_count <= 4:
-            min_graph_height = 350
-        elif device_count <= 6:
-            min_graph_height = 240
-        elif device_count <= 8:
-            min_graph_height = 200
-        elif device_count <= 12:
-            min_graph_height = 180
-        else:
-            min_graph_height = 160
-        required_height = rows * min_graph_height + 150
-        if required_height > max_height:
-            min_graph_height = max(160, (available_height_for_graphs // rows))
-            window_height = max_height
-        else:
-            window_height = required_height
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        monitor_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
+        # Control frame at bottom (fixed height)
         control_frame = ctk.CTkFrame(monitor_window, height=80)
         control_frame.pack(side="bottom", fill="x", padx=10, pady=10)
         control_frame.pack_propagate(False)
 
-        main_frame = ctk.CTkFrame(monitor_window)
-        main_frame.pack(fill="both", expand=True, padx=10, pady=(10, 0))
-        main_frame.pack_propagate(False)
+        # Main scrollable frame for device graphs
+        main_container = ctk.CTkFrame(monitor_window)
+        main_container.pack(fill="both", expand=True, padx=10, pady=(10, 0))
 
-        column_frames = []
-        if cols > 1:
-            columns_container = ctk.CTkFrame(main_frame)
-            columns_container.pack(fill="both", expand=True, padx=5, pady=5)
-            columns_container.pack_propagate(False)
-            for col in range(cols):
-                col_frame = ctk.CTkFrame(columns_container)
-                col_frame.pack(side="left", fill="both", expand=True, padx=5)
-                col_frame.pack_propagate(False)
-                column_frames.append(col_frame)
-        else:
-            column_frames.append(main_frame)
+        # Create scrollable frame for devices
+        scrollable_frame = ctk.CTkScrollableFrame(
+            main_container,
+            label_text="Device Monitors",
+            label_font=ctk.CTkFont(size=16, weight="bold")
+        )
+        scrollable_frame.pack(fill="both", expand=True)
+
+        # Configure grid for scrollable frame
+        for col in range(GRID_COLS):
+            scrollable_frame.grid_columnconfigure(col, weight=1, uniform="column")
+
+        # Calculate total rows needed
+        total_rows = math.ceil(device_count / GRID_COLS)
+        for row in range(total_rows):
+            scrollable_frame.grid_rowconfigure(row, weight=1, uniform="row")
+
+        # Special handling for last row if it has fewer items
+        last_row_items = device_count % GRID_COLS
+        if last_row_items > 0 and total_rows > 1:
+            # We'll handle column spanning for last row items to fill space
+            pass
 
         self.current_monitor_window = monitor_window
         self.monitor_graphs = {}
-        self.device_info = {}  # Store device information for alerts
+        self.monitor_tooltips = {}  # Store tooltip labels for hover functionality
 
+        # Create device monitoring widgets in grid layout
         for i, device in enumerate(selected_devices):
-            row = i // cols
-            col = i % cols
+            row = i // GRID_COLS
+            col = i % GRID_COLS
             ip = device['ip']
-            target_frame = column_frames[col % len(column_frames)]
-            device_frame = ctk.CTkFrame(target_frame)
-            padding_y = 5 if device_count > 6 else 8 if device_count > 4 else 10
-            padding_x = 5 if device_count > 6 else 8 if device_count > 4 else 10
-            device_frame.pack(pady=padding_y, padx=padding_x, fill="both", expand=True)
-            device_frame.pack_propagate(False)
+
+            # Calculate column span for last row items to fill space
+            columnspan = 1
+            if row == total_rows - 1 and last_row_items > 0:
+                # For the last row, distribute columns evenly
+                if last_row_items == 1:
+                    columnspan = GRID_COLS  # Single item spans all columns
+                    col = 0  # Center it
+                elif last_row_items == 2:
+                    columnspan = GRID_COLS // 2  # Each item spans half
+                    col = col * columnspan
+                elif last_row_items == 3:
+                    # For 3 items, distribute across 4 columns
+                    if GRID_COLS == 4:
+                        if i % GRID_COLS == 0:
+                            columnspan = 2  # First item spans 2 columns
+                            col = 0
+                        elif i % GRID_COLS == 1:
+                            columnspan = 1  # Second item spans 1 column
+                            col = 2
+                        else:
+                            columnspan = 1  # Third item spans 1 column
+                            col = 3
+
+            # Create frame for this device
+            device_frame = ctk.CTkFrame(scrollable_frame, corner_radius=10)
+            device_frame.grid(row=row, column=col, columnspan=columnspan, padx=10, pady=10, sticky="nsew")
+
+            # Configure device frame to expand
+            device_frame.grid_rowconfigure(1, weight=1)  # Graph row should expand
+            device_frame.grid_columnconfigure(0, weight=1)
+
+            # Device info label
             info_label = ctk.CTkLabel(
                 device_frame,
-                text=f"Monitoring: {ip} ({device.get('hostname', 'Unknown')}) - {device.get('manufacturer', 'Unknown')}",
+                text=f"{ip} - {device.get('hostname', 'Unknown')}",
                 font=ctk.CTkFont(size=12, weight="bold")
             )
-            info_label.pack(pady=5)
-            available_width = window_width - (cols * 40)
-            graph_width_pixels = available_width // cols
-            graph_width = max(4, min(10, graph_width_pixels / 100))
-            graph_height = max(2.0, min(6, (min_graph_height - 80) / 80))
-            fig = Figure(figsize=(graph_width, graph_height), facecolor='#2b2b2b')
+            info_label.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
+
+            # Manufacturer label
+            manuf_label = ctk.CTkLabel(
+                device_frame,
+                text=device.get('manufacturer', 'Unknown'),
+                font=ctk.CTkFont(size=10)
+            )
+            manuf_label.grid(row=1, column=0, padx=10, pady=(0, 5), sticky="ew")
+
+            # Create tooltip label for hover functionality
+            tooltip_label = ctk.CTkLabel(
+                device_frame,
+                text="",
+                font=ctk.CTkFont(size=10),
+                fg_color=("gray90", "gray20"),
+                corner_radius=6,
+                padx=8,
+                pady=4
+            )
+            self.monitor_tooltips[ip] = tooltip_label
+
+            # Create matplotlib figure for graph
+            # Dynamic sizing based on available space
+            fig = Figure(figsize=(5, 3.5), facecolor='#2b2b2b', tight_layout=True)
             ax = fig.add_subplot(111)
             ax.set_facecolor('#1e1e1e')
             ax.grid(True, alpha=0.3, color='#444444')
-            ax.set_xlabel('Time', color='white')
-            ax.set_ylabel('Latency (ms)', color='white')
-            ax.set_title(f'Real-time Latency for {ip}', color='white', fontsize=14, fontweight='bold')
-            ax.tick_params(colors='white')
+            ax.set_xlabel('Time', color='white', fontsize=9)
+            ax.set_ylabel('Latency (ms)', color='white', fontsize=9)
+            ax.set_title(f'Real-time Latency', color='white', fontsize=11, fontweight='bold')
+            ax.tick_params(colors='white', labelsize=8)
             line, = ax.plot([], [], 'g-', linewidth=2, label='Latency')
-            ax.legend()
+            ax.legend(fontsize=8)
+
+            # Canvas for matplotlib figure
             canvas = FigureCanvasTkAgg(fig, device_frame)
-            canvas_padding_y = 5 if device_count > 6 else 8 if device_count > 4 else 10
-            canvas_padding_x = 5 if device_count > 6 else 8 if device_count > 4 else 10
-            canvas.get_tk_widget().pack(pady=canvas_padding_y, padx=canvas_padding_x, fill="both", expand=True)
+            canvas_widget = canvas.get_tk_widget()
+            canvas_widget.grid(row=2, column=0, padx=10, pady=5, sticky="nsew")
+
+            # Bind hover events to canvas widget
+            canvas_widget.bind("<Enter>", lambda e, ip_addr=ip: self.show_monitor_tooltip(ip_addr))
+            canvas_widget.bind("<Leave>", lambda e, ip_addr=ip: self.hide_monitor_tooltip(ip_addr))
+            canvas_widget.bind("<Motion>", lambda e, ip_addr=ip: self.update_tooltip_position(e, ip_addr))
+
+            # Store graph data
             self.monitor_graphs[ip] = {
                 'figure': fig,
                 'axis': ax,
@@ -342,20 +396,29 @@ class LiveMonitor:
                 'latencies': [],
                 'status_line': None
             }
+
+            # Status frame at bottom of device frame
             status_frame = ctk.CTkFrame(device_frame)
-            status_frame.pack(pady=(0, 10), padx=10, fill="x")
+            status_frame.grid(row=3, column=0, padx=10, pady=(0, 10), sticky="ew")
+            status_frame.grid_columnconfigure(0, weight=1)
+            status_frame.grid_columnconfigure(1, weight=1)
+
+            # Status label
             status_label = ctk.CTkLabel(
                 status_frame,
                 text="Status: Initializing...",
-                font=ctk.CTkFont(size=12)
+                font=ctk.CTkFont(size=10)
             )
-            status_label.pack(side="left", padx=10, pady=5)
+            status_label.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+
+            # Stats label
             stats_label = ctk.CTkLabel(
                 status_frame,
-                text="Avg: --ms | Min: --ms | Max: --ms | Loss: --%",
-                font=ctk.CTkFont(size=12)
+                text="Avg: --ms | Loss: --%",
+                font=ctk.CTkFont(size=10)
             )
-            stats_label.pack(side="right", padx=10, pady=5)
+            stats_label.grid(row=1, column=0, columnspan=2, padx=5, pady=2, sticky="w")
+
             self.monitor_graphs[ip]['status_label'] = status_label
             self.monitor_graphs[ip]['stats_label'] = stats_label
             
@@ -366,6 +429,7 @@ class LiveMonitor:
                 'mac': device.get('mac', 'Unknown')
             }
             
+            # Start monitoring if not already running
             if ip not in self.device_monitors:
                 monitor = DeviceMonitor(ip, interval=1)
                 monitor.start(
@@ -374,7 +438,10 @@ class LiveMonitor:
                 )
                 self.device_monitors[ip] = monitor
 
+        # Initialize monitoring state
         self.monitor_paused = False
+
+        # Control buttons
         pause_btn = ctk.CTkButton(
             control_frame,
             text="Pause Monitoring",
@@ -389,6 +456,34 @@ class LiveMonitor:
         )
         export_btn.pack(side="left", padx=10)
 
+        # Create dedicated exit function for the exit button
+        def exit_live_monitor():
+            """Exit function specifically for the exit button - destroys the live monitor window"""
+            print("Exit button clicked - closing live monitor window")
+            for monitor in self.device_monitors.values():
+                monitor.stop()
+            self.device_monitors.clear()
+            self.monitor_graphs.clear()
+            if hasattr(self, 'monitor_tooltips'):
+                self.monitor_tooltips.clear()
+            if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
+                self.current_monitor_window = None
+            plt.close('all')
+            monitor_window.destroy()
+
+        # Add exit button
+        print("Creating exit button...")  # Debug line
+        exit_btn = ctk.CTkButton(
+            control_frame,
+            text="Exit",
+            command=exit_live_monitor,
+            fg_color="#d32f2f",
+            hover_color="#b71c1c"
+        )
+        exit_btn.pack(side="left", padx=10)
+        print("Exit button created and packed")  # Debug line
+
+        # Window state tracking
         self.is_maximized = False
         maximize_btn = ctk.CTkButton(
             control_frame,
@@ -397,17 +492,314 @@ class LiveMonitor:
         )
         maximize_btn.pack(side="right", padx=10)
 
+        # Add minimize to tray button if tray is available
+        if hasattr(self.parent_app, 'tray_manager') and self.parent_app.tray_manager:
+            tray_btn = ctk.CTkButton(
+                control_frame,
+                text="Minimize to Tray",
+                command=lambda: self.minimize_monitor_to_tray(monitor_window)
+            )
+            tray_btn.pack(side="right", padx=10)
+
+        # Window close handler
         def on_close():
-            for monitor in self.device_monitors.values():
-                monitor.stop()
-            self.device_monitors.clear()
-            self.monitor_graphs.clear()
-            if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
-                self.current_monitor_window = None
-            plt.close('all')
-            monitor_window.destroy()
+            # Check if we have a tray manager - if so, minimize to tray instead of closing
+            if hasattr(self.parent_app, 'tray_manager') and self.parent_app.tray_manager:
+                # Minimize to tray instead of destroying
+                self.minimize_monitor_to_tray(monitor_window)
+            else:
+                # No tray manager, so actually close the window
+                for monitor in self.device_monitors.values():
+                    monitor.stop()
+                self.device_monitors.clear()
+                self.monitor_graphs.clear()
+                if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
+                    self.current_monitor_window = None
+                plt.close('all')
+                monitor_window.destroy()
 
         monitor_window.protocol("WM_DELETE_WINDOW", on_close)
+
+        # Bind window resize event to adjust graphs
+        monitor_window.bind("<Configure>", lambda e: self.on_monitor_window_resize(e))
+
+    def on_monitor_window_resize(self, event):
+        """Handle monitor window resize to adjust graph sizes"""
+        # Only process if it's the main window resize event
+        if event.widget == self.current_monitor_window:
+            # Debounce resize events
+            if hasattr(self, '_resize_after_id'):
+                self.current_monitor_window.after_cancel(self._resize_after_id)
+            self._resize_after_id = self.current_monitor_window.after(300, self.resize_monitor_graphs)
+
+    def resize_monitor_graphs(self):
+        """Resize all monitor graphs to fit window"""
+        if not hasattr(self, 'monitor_graphs') or not self.monitor_graphs:
+            return
+
+        try:
+            for ip, graph_data in self.monitor_graphs.items():
+                if 'canvas' in graph_data:
+                    # Force canvas redraw
+                    graph_data['canvas'].draw()
+        except Exception as e:
+            print(f"Error resizing graphs: {e}")
+
+    def check_alert_thresholds(self, ip, latency, status):
+        """Check if the latency or status exceeds thresholds and send an alert"""
+        # Get device info for the alert
+        device_info = self.device_info.get(ip, {
+            'hostname': 'Unknown',
+            'manufacturer': 'Unknown',
+            'mac': 'Unknown'
+        })
+        
+        # Use the email alert manager to check and send alerts
+        email_alert_manager.check_and_send_alert(ip, latency, status, device_info)
+
+    def update_graph_status(self, ip, latency, status, timestamp):
+        """Update graph status labels"""
+        # Check for alert thresholds
+        self.check_alert_thresholds(ip, latency, status)
+        
+        def _update_on_main_thread():
+            # Check if monitoring window still exists and has valid graphs
+            if not hasattr(self, 'monitor_graphs') or ip not in self.monitor_graphs:
+                return
+
+            graph_data = self.monitor_graphs[ip]
+
+            # Check if the widgets still exist before trying to update them
+            try:
+                if 'status_label' not in graph_data or not graph_data['status_label'].winfo_exists():
+                    return
+                if 'stats_label' not in graph_data or not graph_data['stats_label'].winfo_exists():
+                    return
+            except:
+                return  # Widget was destroyed
+
+            # Update status
+            try:
+                if status == 'up':
+                    status_text = f"Status: Online ({latency:.1f}ms)"
+                    graph_data['status_label'].configure(text=status_text, text_color="#4CAF50")
+                else:
+                    status_text = "Status: Offline"
+                    graph_data['status_label'].configure(text=status_text, text_color="#F44336")
+
+                # Calculate statistics
+                if ip in self.device_monitors:
+                    monitor = self.device_monitors[ip]
+                    valid_latencies = [lat for _, lat, stat in monitor.buffer if stat == 'up' and not math.isnan(lat)]
+
+                    total_pings = len(monitor.buffer)
+                    successful_pings = len(valid_latencies)
+                    failed_pings = total_pings - successful_pings
+
+                    if valid_latencies:
+                        avg_latency = sum(valid_latencies) / len(valid_latencies)
+                        min_latency = min(valid_latencies)
+                        max_latency = max(valid_latencies)
+
+                        loss_percent = (failed_pings / total_pings * 100) if total_pings > 0 else 0
+
+                        stats_text = f"Avg: {avg_latency:.1f}ms | Min: {min_latency:.1f}ms | Max: {max_latency:.1f}ms | Loss: {loss_percent:.1f}%"
+                    else:
+                        stats_text = "Avg: --ms | Min: --ms | Max: --ms | Loss: 100%"
+
+                    graph_data['stats_label'].configure(text=stats_text)
+            except Exception:
+                return  # Widget was destroyed
+
+        # Schedule GUI update on main thread
+        if hasattr(self.parent_app, 'root') and self.parent_app.root.winfo_exists():
+            self.parent_app.root.after(0, _update_on_main_thread)
+
+    def update_monitor_graph(self, ip, buffer_data):
+        """Update monitoring graph with new data"""
+        def _update_graph_on_main_thread():
+            if ip not in self.monitor_graphs or self.monitor_paused:
+                return
+
+            graph_data = self.monitor_graphs[ip]
+
+            # Extract times and latencies
+            times = []
+            latencies = []
+
+            for timestamp, latency, status in buffer_data:
+                times.append(datetime.fromtimestamp(timestamp))
+                if status == 'up' and not math.isnan(latency):
+                    latencies.append(latency)
+                else:
+                    latencies.append(None)  # None for disconnected points
+
+            # Update graph
+            if times and latencies:
+                try:
+                    # Clear previous data
+                    graph_data['line'].set_data([], [])
+
+                    # Plot connected segments
+                    connected_times = []
+                    connected_latencies = []
+
+                    for i, (time, latency) in enumerate(zip(times, latencies)):
+                        if latency is not None:
+                            connected_times.append(time)
+                            connected_latencies.append(latency)
+                        else:
+                            # Plot accumulated connected data
+                            if connected_times:
+                                graph_data['axis'].plot(connected_times, connected_latencies, 'g-', linewidth=2)
+                                connected_times = []
+                                connected_latencies = []
+
+                    # Plot remaining connected data
+                    if connected_times:
+                        graph_data['line'].set_data(connected_times, connected_latencies)
+
+                    # Set axis limits
+                    if times:
+                        graph_data['axis'].set_xlim(min(times), max(times))
+
+                    valid_latencies = [lat for lat in latencies if lat is not None]
+                    if valid_latencies:
+                        min_lat = min(valid_latencies)
+                        max_lat = max(valid_latencies)
+                        margin = (max_lat - min_lat) * 0.1 if max_lat > min_lat else 1
+                        graph_data['axis'].set_ylim(max(0, min_lat - margin), max_lat + margin)
+
+                    # Format time axis
+                    graph_data['axis'].xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+                    graph_data['axis'].tick_params(axis='x', rotation=45)
+
+                    # Refresh canvas
+                    graph_data['canvas'].draw()
+                except Exception:
+                    # Canvas or other widget was destroyed
+                    return
+
+        # Schedule GUI update on main thread
+        if hasattr(self.parent_app, 'root') and self.parent_app.root.winfo_exists():
+            self.parent_app.root.after(0, _update_graph_on_main_thread)
+
+    def toggle_monitoring_pause(self, button):
+        """Toggle monitoring pause state"""
+        self.monitor_paused = not self.monitor_paused
+
+        if self.monitor_paused:
+            button.configure(text="Resume Monitoring")
+        else:
+            button.configure(text="Pause Monitoring")
+
+    def show_monitor_tooltip(self, ip):
+        """Show tooltip with latency info on hover"""
+        if ip not in self.monitor_tooltips or ip not in self.device_monitors:
+            return
+
+        monitor = self.device_monitors[ip]
+        if not monitor.buffer:
+            return
+
+        # Get latest data
+        latest_data = monitor.buffer[-1]
+        _, latency, status = latest_data
+
+        # Get statistics
+        valid_latencies = [lat for _, lat, stat in monitor.buffer if stat == 'up' and not math.isnan(lat)]
+
+        if valid_latencies:
+            avg_latency = sum(valid_latencies) / len(valid_latencies)
+            text = f"Latest: {latency:.1f}ms\nAvg: {avg_latency:.1f}ms\nStatus: {status.capitalize()}"
+        else:
+            text = f"Status: {status.capitalize()}"
+
+        tooltip = self.monitor_tooltips[ip]
+        tooltip.configure(text=text)
+        tooltip.lift()
+
+    def hide_monitor_tooltip(self, ip):
+        """Hide tooltip when mouse leaves"""
+        if ip in self.monitor_tooltips:
+            self.monitor_tooltips[ip].place_forget()
+
+    def update_tooltip_position(self, event, ip):
+        """Update tooltip position to follow mouse"""
+        if ip not in self.monitor_tooltips:
+            return
+
+        tooltip = self.monitor_tooltips[ip]
+        # Position tooltip near mouse with offset
+        x = event.x_root - tooltip.winfo_toplevel().winfo_rootx() + 10
+        y = event.y_root - tooltip.winfo_toplevel().winfo_rooty() - 30
+        tooltip.place(x=x, y=y)
+
+    def minimize_monitor_to_tray(self, monitor_window):
+        """Minimize live monitor window to system tray"""
+        if hasattr(self.parent_app, 'tray_manager') and self.parent_app.tray_manager:
+            # Hide the monitor window
+            monitor_window.withdraw()
+
+            # Store reference to restore later
+            self.minimized_monitor_window = monitor_window
+
+            # Update the tray menu to show the restore option
+            if hasattr(self.parent_app.tray_manager, 'update_menu'):
+                self.parent_app.tray_manager.update_menu()
+
+            # Update tray tooltip
+            if hasattr(self.parent_app.tray_manager, 'update_tooltip'):
+                device_count = len(self.device_info)
+                self.parent_app.tray_manager.update_tooltip(f"I.T Assistant - Monitoring {device_count} devices")
+
+            # Show notification
+            try:
+                if hasattr(self.parent_app.tray_manager.icon, 'notify'):
+                    self.parent_app.tray_manager.icon.notify(
+                        "Live Monitor minimized to tray",
+                        f"Monitoring {len(self.device_info)} devices in background"
+                    )
+            except:
+                pass
+        else:
+            # No tray available, just minimize normally
+            monitor_window.iconify()
+
+    def export_monitoring_data(self):
+        """Export monitoring data to CSV"""
+        if not self.device_monitors:
+            messagebox.showwarning("No Data", "No monitoring data to export")
+            return
+
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialname=f"monitoring_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        )
+
+        if filename:
+            try:
+                with open(filename, 'w', newline='') as csvfile:
+                    writer = csv.writer(csvfile)
+
+                    # Headers
+                    writer.writerow(["Timestamp", "IP Address", "Latency (ms)", "Status"])
+
+                    # Data from all monitors
+                    for ip, monitor in self.device_monitors.items():
+                        for timestamp, latency, status in monitor.buffer:
+                            writer.writerow([
+                                datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'),
+                                ip,
+                                f"{latency:.2f}" if not math.isnan(latency) else "N/A",
+                                status
+                            ])
+
+                messagebox.showinfo("Success", f"Monitoring data exported to {filename}")
+
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export data: {e}")
 
     def toggle_maximize(self, window, button):
         """Toggle maximize/restore window state and ensure uniform fill"""
@@ -473,172 +865,6 @@ class LiveMonitor:
                     window.geometry("1200x800+100+100")
                     button.configure(text="Maximize")
                     self.is_maximized = False
-
-    def export_monitoring_data(self):
-        """Export monitoring data to CSV"""
-        if not self.device_monitors:
-            messagebox.showwarning("No Data", "No monitoring data to export")
-            return
-
-        filename = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            initialname=f"monitoring_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        )
-
-        if filename:
-            try:
-                with open(filename, 'w', newline='') as csvfile:
-                    writer = csv.writer(csvfile)
-
-                    # Headers
-                    writer.writerow(["Timestamp", "IP Address", "Latency (ms)", "Status"])
-
-                    # Data from all monitors
-                    for ip, monitor in self.device_monitors.items():
-                        for timestamp, latency, status in monitor.buffer:
-                            writer.writerow([
-                                datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'),
-                                ip,
-                                f"{latency:.2f}" if not math.isnan(latency) else "N/A",
-                                status
-                            ])
-
-                messagebox.showinfo("Success", f"Monitoring data exported to {filename}")
-
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to export data: {e}")
-
-    def check_alert_thresholds(self, ip, latency, status):
-        """Check if the latency or status exceeds thresholds and send an alert"""
-        # Get device info for the alert
-        device_info = self.device_info.get(ip, {
-            'hostname': 'Unknown',
-            'manufacturer': 'Unknown',
-            'mac': 'Unknown'
-        })
-        
-        # Use the email alert manager to check and send alerts
-        email_alert_manager.check_and_send_alert(ip, latency, status, device_info)
-
-    def update_graph_status(self, ip, latency, status, timestamp):
-        """Update graph status labels"""
-        # Check for alert thresholds
-        self.check_alert_thresholds(ip, latency, status)
-        
-        def _update_on_main_thread():
-            if ip not in self.monitor_graphs:
-                return
-
-            graph_data = self.monitor_graphs[ip]
-
-            # Update status
-            if status == 'up':
-                status_text = f"Status: Online ({latency:.1f}ms)"
-                graph_data['status_label'].configure(text=status_text, text_color="#4CAF50")
-            else:
-                status_text = "Status: Offline"
-                graph_data['status_label'].configure(text=status_text, text_color="#F44336")
-
-            # Calculate statistics
-            if ip in self.device_monitors:
-                monitor = self.device_monitors[ip]
-                valid_latencies = [lat for _, lat, stat in monitor.buffer if stat == 'up' and not math.isnan(lat)]
-
-                total_pings = len(monitor.buffer)
-                successful_pings = len(valid_latencies)
-                failed_pings = total_pings - successful_pings
-
-                if valid_latencies:
-                    avg_latency = sum(valid_latencies) / len(valid_latencies)
-                    min_latency = min(valid_latencies)
-                    max_latency = max(valid_latencies)
-
-                    loss_percent = (failed_pings / total_pings * 100) if total_pings > 0 else 0
-
-                    stats_text = f"Avg: {avg_latency:.1f}ms | Min: {min_latency:.1f}ms | Max: {max_latency:.1f}ms | Loss: {loss_percent:.1f}%"
-                else:
-                    stats_text = "Avg: --ms | Min: --ms | Max: --ms | Loss: 100%"
-
-                graph_data['stats_label'].configure(text=stats_text)
-
-        # Schedule GUI update on main thread
-        if hasattr(self.parent_app, 'root'):
-            self.parent_app.root.after(0, _update_on_main_thread)
-
-    def update_monitor_graph(self, ip, buffer_data):
-        """Update monitoring graph with new data"""
-        def _update_graph_on_main_thread():
-            if ip not in self.monitor_graphs or self.monitor_paused:
-                return
-
-            graph_data = self.monitor_graphs[ip]
-
-            # Extract times and latencies
-            times = []
-            latencies = []
-
-            for timestamp, latency, status in buffer_data:
-                times.append(datetime.fromtimestamp(timestamp))
-                if status == 'up' and not math.isnan(latency):
-                    latencies.append(latency)
-                else:
-                    latencies.append(None)  # None for disconnected points
-
-            # Update graph
-            if times and latencies:
-                # Clear previous data
-                graph_data['line'].set_data([], [])
-
-                # Plot connected segments
-                connected_times = []
-                connected_latencies = []
-
-                for i, (time, latency) in enumerate(zip(times, latencies)):
-                    if latency is not None:
-                        connected_times.append(time)
-                        connected_latencies.append(latency)
-                    else:
-                        # Plot accumulated connected data
-                        if connected_times:
-                            graph_data['axis'].plot(connected_times, connected_latencies, 'g-', linewidth=2)
-                            connected_times = []
-                            connected_latencies = []
-
-                # Plot remaining connected data
-                if connected_times:
-                    graph_data['line'].set_data(connected_times, connected_latencies)
-
-                # Set axis limits
-                if times:
-                    graph_data['axis'].set_xlim(min(times), max(times))
-
-                valid_latencies = [lat for lat in latencies if lat is not None]
-                if valid_latencies:
-                    min_lat = min(valid_latencies)
-                    max_lat = max(valid_latencies)
-                    margin = (max_lat - min_lat) * 0.1 if max_lat > min_lat else 1
-                    graph_data['axis'].set_ylim(max(0, min_lat - margin), max_lat + margin)
-
-                # Format time axis
-                graph_data['axis'].xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
-                graph_data['axis'].tick_params(axis='x', rotation=45)
-
-                # Refresh canvas
-                graph_data['canvas'].draw()
-
-        # Schedule GUI update on main thread
-        if hasattr(self.parent_app, 'root'):
-            self.parent_app.root.after(0, _update_graph_on_main_thread)
-
-    def toggle_monitoring_pause(self, button):
-        """Toggle monitoring pause state"""
-        self.monitor_paused = not self.monitor_paused
-
-        if self.monitor_paused:
-            button.configure(text="Resume Monitoring")
-        else:
-            button.configure(text="Pause Monitoring")
 
     def run_speed_test(self):
         """Run internet speed test"""

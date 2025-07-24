@@ -669,9 +669,32 @@ class SettingsDialog:
             widget = ctk.CTkEntry(parent, textvariable=var, placeholder_text=kwargs.get("placeholder", ""))
 
         elif widget_type == "spinbox":
-            var = tk.DoubleVar() if kwargs.get("increment", 1) != 1 else tk.IntVar()
+            # Use StringVar to avoid type conversion errors
+            var = tk.StringVar()
+            # Set default value based on range
+            range_values = kwargs.get("range_values", (0, 100))
+            default_val = kwargs.get("default", range_values[0])
+            var.set(str(default_val))
+            
+            # Create entry with validation
             widget = ctk.CTkEntry(parent, textvariable=var, width=100)
-            # Note: CTk doesn't have spinbox, using entry with validation
+            
+            # Add validation to ensure numeric input
+            def validate_numeric(value):
+                if value == "":
+                    return True  # Allow empty for typing
+                try:
+                    int(value)
+                    return True
+                except ValueError:
+                    return False
+            
+            vcmd = (parent.register(validate_numeric), '%P')
+            widget.configure(validate="key", validatecommand=vcmd)
+            
+            # Store the variable type info for later conversion
+            var._var_type = "int"
+            var._default = default_val
 
         elif widget_type == "switch":
             var = tk.BooleanVar()
@@ -706,8 +729,32 @@ class SettingsDialog:
                                 show=show if show else None)
 
         elif widget_type == "spinbox":
-            var = tk.DoubleVar() if kwargs.get("increment", 1) != 1 else tk.IntVar()
+            # Use StringVar to avoid type conversion errors
+            var = tk.StringVar()
+            # Set default value based on range
+            range_values = kwargs.get("range_values", (0, 100))
+            default_val = kwargs.get("default", range_values[0])
+            var.set(str(default_val))
+            
+            # Create entry with validation
             widget = ctk.CTkEntry(parent, textvariable=var, width=100)
+            
+            # Add validation to ensure numeric input
+            def validate_numeric(value):
+                if value == "":
+                    return True  # Allow empty for typing
+                try:
+                    int(value)
+                    return True
+                except ValueError:
+                    return False
+            
+            vcmd = (parent.register(validate_numeric), '%P')
+            widget.configure(validate="key", validatecommand=vcmd)
+            
+            # Store the variable type info for later conversion
+            var._var_type = "int"
+            var._default = default_val
 
         elif widget_type == "switch":
             var = tk.BooleanVar()
@@ -808,29 +855,36 @@ class SettingsDialog:
     def save_current_settings(self):
         """Save current dialog values to settings"""
         try:
+            # Helper function to get numeric value from StringVar
+            def get_numeric_value(var):
+                val = var.get()
+                if hasattr(var, '_var_type') and var._var_type == "int":
+                    return int(val) if val else getattr(var, '_default', 0)
+                return val
+            
             # Scan settings
-            settings_manager.update_setting("scan", "max_workers", self.setting_vars["scan_max_workers"].get())
-            settings_manager.update_setting("scan", "timeout", self.setting_vars["scan_timeout"].get())
-            settings_manager.update_setting("scan", "ping_timeout", self.setting_vars["scan_ping_timeout"].get())
+            settings_manager.update_setting("scan", "max_workers", get_numeric_value(self.setting_vars["scan_max_workers"]))
+            settings_manager.update_setting("scan", "timeout", get_numeric_value(self.setting_vars["scan_timeout"]))
+            settings_manager.update_setting("scan", "ping_timeout", get_numeric_value(self.setting_vars["scan_ping_timeout"]))
             settings_manager.update_setting("scan", "enable_scapy", self.setting_vars["scan_enable_scapy"].get())
             settings_manager.update_setting("scan", "enable_mac_lookup", self.setting_vars["scan_enable_mac_lookup"].get())
             settings_manager.update_setting("scan", "auto_detect_network", self.setting_vars["scan_auto_detect_network"].get())
             settings_manager.update_setting("scan", "default_network_range", self.setting_vars["scan_default_network_range"].get())
 
             # Monitor settings
-            settings_manager.update_setting("monitor", "update_interval", self.setting_vars["monitor_update_interval"].get())
-            settings_manager.update_setting("monitor", "buffer_size", self.setting_vars["monitor_buffer_size"].get())
-            settings_manager.update_setting("monitor", "graph_refresh_rate", self.setting_vars["monitor_graph_refresh_rate"].get())
-            settings_manager.update_setting("monitor", "max_monitoring_devices", self.setting_vars["monitor_max_monitoring_devices"].get())
-            settings_manager.update_setting("monitor", "alert_threshold_ms", self.setting_vars["monitor_alert_threshold_ms"].get())
+            settings_manager.update_setting("monitor", "update_interval", get_numeric_value(self.setting_vars["monitor_update_interval"]))
+            settings_manager.update_setting("monitor", "buffer_size", get_numeric_value(self.setting_vars["monitor_buffer_size"]))
+            settings_manager.update_setting("monitor", "graph_refresh_rate", get_numeric_value(self.setting_vars["monitor_graph_refresh_rate"]))
+            settings_manager.update_setting("monitor", "max_monitoring_devices", get_numeric_value(self.setting_vars["monitor_max_monitoring_devices"]))
+            settings_manager.update_setting("monitor", "alert_threshold_ms", get_numeric_value(self.setting_vars["monitor_alert_threshold_ms"]))
             settings_manager.update_setting("monitor", "enable_alerts", self.setting_vars["monitor_enable_alerts"].get())
             settings_manager.update_setting("monitor", "auto_start_monitoring", self.setting_vars["monitor_auto_start_monitoring"].get())
 
             # Interface settings
             settings_manager.update_setting("interface", "theme", self.setting_vars["interface_theme"].get())
-            settings_manager.update_setting("interface", "window_width", self.setting_vars["interface_window_width"].get())
-            settings_manager.update_setting("interface", "window_height", self.setting_vars["interface_window_height"].get())
-            settings_manager.update_setting("interface", "sidebar_width", self.setting_vars["interface_sidebar_width"].get())
+            settings_manager.update_setting("interface", "window_width", get_numeric_value(self.setting_vars["interface_window_width"]))
+            settings_manager.update_setting("interface", "window_height", get_numeric_value(self.setting_vars["interface_window_height"]))
+            settings_manager.update_setting("interface", "sidebar_width", get_numeric_value(self.setting_vars["interface_sidebar_width"]))
             settings_manager.update_setting("interface", "remember_window_size", self.setting_vars["interface_remember_window_size"].get())
             settings_manager.update_setting("interface", "auto_save_reports", self.setting_vars["interface_auto_save_reports"].get())
             settings_manager.update_setting("interface", "show_tooltips", self.setting_vars["interface_show_tooltips"].get())
@@ -839,8 +893,8 @@ class SettingsDialog:
             # Network settings
             settings_manager.update_setting("network", "preferred_interface", self.setting_vars["network_preferred_interface"].get())
             settings_manager.update_setting("network", "enable_ipv6", self.setting_vars["network_enable_ipv6"].get())
-            settings_manager.update_setting("network", "connection_timeout", self.setting_vars["network_connection_timeout"].get())
-            settings_manager.update_setting("network", "retry_attempts", self.setting_vars["network_retry_attempts"].get())
+            settings_manager.update_setting("network", "connection_timeout", get_numeric_value(self.setting_vars["network_connection_timeout"]))
+            settings_manager.update_setting("network", "retry_attempts", get_numeric_value(self.setting_vars["network_retry_attempts"]))
 
             # DNS servers
             dns_text = self.setting_vars["network_dns_servers"].get("1.0", "end-1c")
@@ -854,7 +908,7 @@ class SettingsDialog:
 
             # Email configuration settings - save as individual properties
             settings_manager.update_setting("alerts", "smtp_server", self.setting_vars["alerts_smtp_server"].get())
-            settings_manager.update_setting("alerts", "smtp_port", self.setting_vars["alerts_smtp_port"].get())
+            settings_manager.update_setting("alerts", "smtp_port", get_numeric_value(self.setting_vars["alerts_smtp_port"]))
             settings_manager.update_setting("alerts", "smtp_username", self.setting_vars["alerts_smtp_username"].get())
             settings_manager.update_setting("alerts", "smtp_password", self.setting_vars["alerts_smtp_password"].get())
             settings_manager.update_setting("alerts", "smtp_tls", self.setting_vars["alerts_smtp_tls"].get())
@@ -866,13 +920,13 @@ class SettingsDialog:
             settings_manager.update_setting("alerts", "email_recipient_list", recipients_list)
 
             # Email alert thresholds
-            settings_manager.update_setting("alerts", "email_threshold_ms", self.setting_vars["alerts_email_threshold_ms"].get())
-            settings_manager.update_setting("alerts", "email_consecutive_failures", self.setting_vars["alerts_email_consecutive_failures"].get())
-            settings_manager.update_setting("alerts", "email_cooldown_minutes", self.setting_vars["alerts_email_cooldown_minutes"].get())
+            settings_manager.update_setting("alerts", "email_threshold_ms", get_numeric_value(self.setting_vars["alerts_email_threshold_ms"]))
+            settings_manager.update_setting("alerts", "email_consecutive_failures", get_numeric_value(self.setting_vars["alerts_email_consecutive_failures"]))
+            settings_manager.update_setting("alerts", "email_cooldown_minutes", get_numeric_value(self.setting_vars["alerts_email_cooldown_minutes"]))
             settings_manager.update_setting("alerts", "email_batch_alerts", self.setting_vars["alerts_email_batch_alerts"].get())
-            settings_manager.update_setting("alerts", "email_batch_interval_minutes", self.setting_vars["alerts_email_batch_interval_minutes"].get())
+            settings_manager.update_setting("alerts", "email_batch_interval_minutes", get_numeric_value(self.setting_vars["alerts_email_batch_interval_minutes"]))
             settings_manager.update_setting("alerts", "email_send_reports", self.setting_vars["alerts_email_send_reports"].get())
-            settings_manager.update_setting("alerts", "email_report_interval_hours", self.setting_vars["alerts_email_report_interval_hours"].get())
+            settings_manager.update_setting("alerts", "email_report_interval_hours", get_numeric_value(self.setting_vars["alerts_email_report_interval_hours"]))
             settings_manager.update_setting("alerts", "email_subject_template", self.setting_vars["alerts_email_subject_template"].get())
 
             # Alert types
@@ -947,7 +1001,7 @@ class SettingsDialog:
             # Get current email configuration from dialog
             email_config = {
                 "smtp_server": self.setting_vars["alerts_smtp_server"].get(),
-                "smtp_port": self.setting_vars["alerts_smtp_port"].get(),
+                "smtp_port": int(self.setting_vars["alerts_smtp_port"].get()) if self.setting_vars["alerts_smtp_port"].get() else 587,
                 "username": self.setting_vars["alerts_smtp_username"].get(),
                 "password": self.setting_vars["alerts_smtp_password"].get(),
                 "use_tls": self.setting_vars["alerts_smtp_tls"].get(),

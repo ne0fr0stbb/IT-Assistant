@@ -7,3 +7,4 @@ psutil
 scapy
 ping3
 numpy<2
+pystray
