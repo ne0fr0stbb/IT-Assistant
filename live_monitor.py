@@ -210,21 +210,21 @@ class LiveMonitor:
         if not selected_devices:
             messagebox.showwarning("No Devices", "Please select at least one device to monitor.")
             return
-
+        
         # Close existing monitor window if open
         if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
             self.current_monitor_window.destroy()
-
+        
         monitor_window = ctk.CTk()
         monitor_window.title("Live Device Monitoring - Real-time Graphs")
-
+        
         device_count = len(selected_devices)
         screen_width = monitor_window.winfo_screenwidth()
         screen_height = monitor_window.winfo_screenheight()
-
+        
         # Dynamic grid layout based on device count
         MAX_COLS = 4  # Maximum columns per row
-
+        
         # Determine optimal grid configuration
         if device_count <= 2:
             GRID_COLS = device_count  # 1 or 2 devices in single row
@@ -232,45 +232,45 @@ class LiveMonitor:
             GRID_COLS = min(device_count, MAX_COLS)  # Up to 4 in single row
         else:
             GRID_COLS = MAX_COLS  # Use max columns for more than 4 devices
-
+        
         # Calculate window dimensions
         # Each device graph should be at least 300px wide and 250px tall
         MIN_DEVICE_WIDTH = 300
         MIN_DEVICE_HEIGHT = 250
-
+        
         # Calculate window size based on actual grid columns needed
         window_width = min(screen_width - 100, (GRID_COLS * MIN_DEVICE_WIDTH) + 60)
-
+        
         # Determine rows needed
         total_rows = math.ceil(device_count / GRID_COLS)
-
+        
         # Only show second row if more than 4 devices
         if device_count <= 4:
             visible_rows = 1  # Always single row for 4 or fewer devices
         else:
             MAX_VISIBLE_ROWS = 2  # Show up to 2 rows for more than 4 devices
             visible_rows = min(MAX_VISIBLE_ROWS, total_rows)
-
+        
         window_height = min(screen_height - 100, (visible_rows * MIN_DEVICE_HEIGHT) + 180)
-
+        
         # Center the window
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         monitor_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
         monitor_window.state('normal')
-
+        
         # Set matplotlib style for dark theme
         plt.style.use('dark_background')
-
+        
         # Control frame at bottom (fixed height)
         control_frame = ctk.CTkFrame(monitor_window, height=80)
         control_frame.pack(side="bottom", fill="x", padx=10, pady=10)
         control_frame.pack_propagate(False)
-
+        
         # Main scrollable frame for device graphs
         main_container = ctk.CTkFrame(monitor_window)
         main_container.pack(fill="both", expand=True, padx=10, pady=(10, 0))
-
+        
         # Create scrollable frame for devices
         scrollable_frame = ctk.CTkScrollableFrame(
             main_container,
@@ -278,32 +278,32 @@ class LiveMonitor:
             label_font=ctk.CTkFont(size=16, weight="bold")
         )
         scrollable_frame.pack(fill="both", expand=True)
-
+        
         # Configure grid for scrollable frame
         for col in range(GRID_COLS):
             scrollable_frame.grid_columnconfigure(col, weight=1, uniform="column")
-
+        
         # Calculate total rows needed
         total_rows = math.ceil(device_count / GRID_COLS)
         for row in range(total_rows):
             scrollable_frame.grid_rowconfigure(row, weight=1, uniform="row")
-
+        
         # Special handling for last row if it has fewer items
         last_row_items = device_count % GRID_COLS
         if last_row_items > 0 and total_rows > 1:
             # We'll handle column spanning for last row items to fill space
             pass
-
+        
         self.current_monitor_window = monitor_window
         self.monitor_graphs = {}
         self.monitor_tooltips = {}  # Store tooltip labels for hover functionality
-
+        
         # Create device monitoring widgets in grid layout
         for i, device in enumerate(selected_devices):
             row = i // GRID_COLS
             col = i % GRID_COLS
             ip = device['ip']
-
+            
             # Calculate column span for last row items to fill space
             columnspan = 1
             if row == total_rows - 1 and last_row_items > 0:
@@ -326,15 +326,15 @@ class LiveMonitor:
                         else:
                             columnspan = 1  # Third item spans 1 column
                             col = 3
-
+            
             # Create frame for this device
             device_frame = ctk.CTkFrame(scrollable_frame, corner_radius=10)
             device_frame.grid(row=row, column=col, columnspan=columnspan, padx=10, pady=10, sticky="nsew")
-
+            
             # Configure device frame to expand
             device_frame.grid_rowconfigure(1, weight=1)  # Graph row should expand
             device_frame.grid_columnconfigure(0, weight=1)
-
+            
             # Device info label
             info_label = ctk.CTkLabel(
                 device_frame,
@@ -342,7 +342,7 @@ class LiveMonitor:
                 font=ctk.CTkFont(size=12, weight="bold")
             )
             info_label.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
-
+            
             # Manufacturer label
             manuf_label = ctk.CTkLabel(
                 device_frame,
@@ -350,7 +350,7 @@ class LiveMonitor:
                 font=ctk.CTkFont(size=10)
             )
             manuf_label.grid(row=1, column=0, padx=10, pady=(0, 5), sticky="ew")
-
+            
             # Create tooltip label for hover functionality
             tooltip_label = ctk.CTkLabel(
                 device_frame,
@@ -362,7 +362,7 @@ class LiveMonitor:
                 pady=4
             )
             self.monitor_tooltips[ip] = tooltip_label
-
+            
             # Create matplotlib figure for graph
             # Dynamic sizing based on available space
             fig = Figure(figsize=(5, 3.5), facecolor='#2b2b2b', tight_layout=True)
@@ -375,17 +375,17 @@ class LiveMonitor:
             ax.tick_params(colors='white', labelsize=8)
             line, = ax.plot([], [], 'g-', linewidth=2, label='Latency')
             ax.legend(fontsize=8)
-
+            
             # Canvas for matplotlib figure
             canvas = FigureCanvasTkAgg(fig, device_frame)
             canvas_widget = canvas.get_tk_widget()
             canvas_widget.grid(row=2, column=0, padx=10, pady=5, sticky="nsew")
-
+            
             # Bind hover events to canvas widget
             canvas_widget.bind("<Enter>", lambda e, ip_addr=ip: self.show_monitor_tooltip(ip_addr))
             canvas_widget.bind("<Leave>", lambda e, ip_addr=ip: self.hide_monitor_tooltip(ip_addr))
             canvas_widget.bind("<Motion>", lambda e, ip_addr=ip: self.update_tooltip_position(e, ip_addr))
-
+            
             # Store graph data
             self.monitor_graphs[ip] = {
                 'figure': fig,
@@ -396,13 +396,13 @@ class LiveMonitor:
                 'latencies': [],
                 'status_line': None
             }
-
+            
             # Status frame at bottom of device frame
             status_frame = ctk.CTkFrame(device_frame)
             status_frame.grid(row=3, column=0, padx=10, pady=(0, 10), sticky="ew")
             status_frame.grid_columnconfigure(0, weight=1)
             status_frame.grid_columnconfigure(1, weight=1)
-
+            
             # Status label
             status_label = ctk.CTkLabel(
                 status_frame,
@@ -410,7 +410,7 @@ class LiveMonitor:
                 font=ctk.CTkFont(size=10)
             )
             status_label.grid(row=0, column=0, padx=5, pady=2, sticky="w")
-
+            
             # Stats label
             stats_label = ctk.CTkLabel(
                 status_frame,
@@ -418,7 +418,7 @@ class LiveMonitor:
                 font=ctk.CTkFont(size=10)
             )
             stats_label.grid(row=1, column=0, columnspan=2, padx=5, pady=2, sticky="w")
-
+            
             self.monitor_graphs[ip]['status_label'] = status_label
             self.monitor_graphs[ip]['stats_label'] = stats_label
             
@@ -437,10 +437,10 @@ class LiveMonitor:
                     graph_callback=self.update_monitor_graph
                 )
                 self.device_monitors[ip] = monitor
-
+        
         # Initialize monitoring state
         self.monitor_paused = False
-
+        
         # Control buttons
         pause_btn = ctk.CTkButton(
             control_frame,
@@ -448,7 +448,7 @@ class LiveMonitor:
             command=lambda: self.toggle_monitoring_pause(pause_btn)
         )
         pause_btn.pack(side="left", padx=10)
-
+        
         export_btn = ctk.CTkButton(
             control_frame,
             text="Export Data",
@@ -482,7 +482,7 @@ class LiveMonitor:
         )
         exit_btn.pack(side="left", padx=10)
         print("Exit button created and packed")  # Debug line
-
+        
         # Window state tracking
         self.is_maximized = False
         maximize_btn = ctk.CTkButton(
@@ -491,7 +491,7 @@ class LiveMonitor:
             command=lambda: self.toggle_maximize(monitor_window, maximize_btn)
         )
         maximize_btn.pack(side="right", padx=10)
-
+        
         # Add minimize to tray button if tray is available
         if hasattr(self.parent_app, 'tray_manager') and self.parent_app.tray_manager:
             tray_btn = ctk.CTkButton(
@@ -500,7 +500,7 @@ class LiveMonitor:
                 command=lambda: self.minimize_monitor_to_tray(monitor_window)
             )
             tray_btn.pack(side="right", padx=10)
-
+        
         # Window close handler
         def on_close():
             # Check if we have a tray manager - if so, minimize to tray instead of closing
@@ -517,12 +517,12 @@ class LiveMonitor:
                     self.current_monitor_window = None
                 plt.close('all')
                 monitor_window.destroy()
-
+        
         monitor_window.protocol("WM_DELETE_WINDOW", on_close)
-
+        
         # Bind window resize event to adjust graphs
         monitor_window.bind("<Configure>", lambda e: self.on_monitor_window_resize(e))
-
+    
     def on_monitor_window_resize(self, event):
         """Handle monitor window resize to adjust graph sizes"""
         # Only process if it's the main window resize event
@@ -536,7 +536,7 @@ class LiveMonitor:
         """Resize all monitor graphs to fit window"""
         if not hasattr(self, 'monitor_graphs') or not self.monitor_graphs:
             return
-
+        
         try:
             for ip, graph_data in self.monitor_graphs.items():
                 if 'canvas' in graph_data:
@@ -568,7 +568,7 @@ class LiveMonitor:
                 return
 
             graph_data = self.monitor_graphs[ip]
-
+            
             # Check if the widgets still exist before trying to update them
             try:
                 if 'status_label' not in graph_data or not graph_data['status_label'].winfo_exists():
@@ -692,20 +692,20 @@ class LiveMonitor:
             button.configure(text="Resume Monitoring")
         else:
             button.configure(text="Pause Monitoring")
-
+    
     def show_monitor_tooltip(self, ip):
         """Show tooltip with latency info on hover"""
         if ip not in self.monitor_tooltips or ip not in self.device_monitors:
             return
-
+        
         monitor = self.device_monitors[ip]
         if not monitor.buffer:
             return
-
+        
         # Get latest data
         latest_data = monitor.buffer[-1]
         _, latency, status = latest_data
-
+        
         # Get statistics
         valid_latencies = [lat for _, lat, stat in monitor.buffer if stat == 'up' and not math.isnan(lat)]
 
@@ -714,45 +714,45 @@ class LiveMonitor:
             text = f"Latest: {latency:.1f}ms\nAvg: {avg_latency:.1f}ms\nStatus: {status.capitalize()}"
         else:
             text = f"Status: {status.capitalize()}"
-
+        
         tooltip = self.monitor_tooltips[ip]
         tooltip.configure(text=text)
         tooltip.lift()
-
+    
     def hide_monitor_tooltip(self, ip):
         """Hide tooltip when mouse leaves"""
         if ip in self.monitor_tooltips:
             self.monitor_tooltips[ip].place_forget()
-
+    
     def update_tooltip_position(self, event, ip):
         """Update tooltip position to follow mouse"""
         if ip not in self.monitor_tooltips:
             return
-
+        
         tooltip = self.monitor_tooltips[ip]
         # Position tooltip near mouse with offset
         x = event.x_root - tooltip.winfo_toplevel().winfo_rootx() + 10
         y = event.y_root - tooltip.winfo_toplevel().winfo_rooty() - 30
         tooltip.place(x=x, y=y)
-
+    
     def minimize_monitor_to_tray(self, monitor_window):
         """Minimize live monitor window to system tray"""
         if hasattr(self.parent_app, 'tray_manager') and self.parent_app.tray_manager:
             # Hide the monitor window
             monitor_window.withdraw()
-
+            
             # Store reference to restore later
             self.minimized_monitor_window = monitor_window
-
+            
             # Update the tray menu to show the restore option
             if hasattr(self.parent_app.tray_manager, 'update_menu'):
                 self.parent_app.tray_manager.update_menu()
-
+            
             # Update tray tooltip
             if hasattr(self.parent_app.tray_manager, 'update_tooltip'):
                 device_count = len(self.device_info)
                 self.parent_app.tray_manager.update_tooltip(f"I.T Assistant - Monitoring {device_count} devices")
-
+            
             # Show notification
             try:
                 if hasattr(self.parent_app.tray_manager.icon, 'notify'):

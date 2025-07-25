@@ -224,7 +224,10 @@ class NetworkScanner:
                         'web_service': web_service,
                         'hostname': hostname,
                         'manufacturer': manufacturer,
-                        'status': 'Online'
+                        'status': 'Online',
+                        'profile': '',  # New field for profile
+                        'friendly_name': '',  # New field for friendly name
+                        'notes': ''  # New field for notes
                     })
 
                 # If ARP scan found no devices, fall back to ping scanning
@@ -244,7 +247,10 @@ class NetworkScanner:
                             'web_service': web_service,
                             'hostname': hostname,
                             'manufacturer': manufacturer,
-                            'status': 'Online'
+                            'status': 'Online',
+                            'profile': '',  # New field for profile
+                            'friendly_name': '',  # New field for friendly name
+                            'notes': ''  # New field for notes
                         })
 
             except Exception as e:
@@ -265,7 +271,10 @@ class NetworkScanner:
                         'web_service': web_service,
                         'hostname': hostname,
                         'manufacturer': manufacturer,
-                        'status': 'Online'
+                        'status': 'Online',
+                        'profile': '',  # New field for profile
+                        'friendly_name': '',  # New field for friendly name
+                        'notes': ''  # New field for notes
                     })
         else:
             # Fallback to ping scanning
@@ -284,7 +293,10 @@ class NetworkScanner:
                     'web_service': web_service,
                     'hostname': hostname,
                     'manufacturer': manufacturer,
-                    'status': 'Online'
+                    'status': 'Online',
+                    'profile': '',  # New field for profile
+                    'friendly_name': '',  # New field for friendly name
+                    'notes': ''  # New field for notes
                 })
                 
         return devices
@@ -895,7 +907,8 @@ class NetworkMonitorApp:
             font=button_font
         )
         self.live_monitor_btn.grid(row=1, column=0, padx=8, pady=4, sticky="ew")
-        
+
+        '''
         # Nmap Scan Selected button
         self.nmap_scan_btn = ctk.CTkButton(
             tools_frame,
@@ -905,7 +918,7 @@ class NetworkMonitorApp:
             font=button_font
         )
         self.nmap_scan_btn.grid(row=2, column=0, padx=8, pady=4, sticky="ew")
-
+        '''
         # Internet Speed Test button
         self.speedtest_btn = ctk.CTkButton(
             tools_frame,
@@ -1013,11 +1026,11 @@ class NetworkMonitorApp:
         self.table_frame.grid(row=2, column=0, padx=20, pady=10, sticky="nsew")
         
         # Configure column weights for equal spacing
-        for i in range(8):
+        for i in range(11):  # Updated from 8 to 11 for new columns
             self.table_frame.grid_columnconfigure(i, weight=1, minsize=100)
         
-        # Table headers
-        headers = ["Select", "IP Address", "MAC Address", "Hostname", "Manufacturer", "Response Time", "Web Service", "Actions"]
+        # Table headers - Updated to include new columns
+        headers = ["Select", "Profile", "IP Address", "MAC Address", "Hostname", "Friendly Name", "Manufacturer", "Response Time", "Web Service", "Actions", "Notes"]
         for i, header in enumerate(headers):
             label = ctk.CTkLabel(
                 self.table_frame, 
@@ -1271,24 +1284,34 @@ class NetworkMonitorApp:
         checkbox.grid(row=row_num, column=0, padx=5, pady=2, sticky="w")
         row_widgets.append(checkbox)
         
+        # Profile (new column)
+        profile_label = ctk.CTkLabel(self.table_frame, text=device.get('profile', ''))
+        profile_label.grid(row=row_num, column=1, padx=5, pady=2)
+        row_widgets.append(profile_label)
+
         # IP Address
         ip_label = ctk.CTkLabel(self.table_frame, text=device['ip'])
-        ip_label.grid(row=row_num, column=1, padx=5, pady=2)
+        ip_label.grid(row=row_num, column=2, padx=5, pady=2)
         row_widgets.append(ip_label)
 
         # MAC Address
         mac_label = ctk.CTkLabel(self.table_frame, text=device.get('mac', 'Unknown'))
-        mac_label.grid(row=row_num, column=2, padx=5, pady=2)
+        mac_label.grid(row=row_num, column=3, padx=5, pady=2)
         row_widgets.append(mac_label)
         
         # Hostname
         hostname_label = ctk.CTkLabel(self.table_frame, text=device.get('hostname', 'Unknown'))
-        hostname_label.grid(row=row_num, column=3, padx=5, pady=2)
+        hostname_label.grid(row=row_num, column=4, padx=5, pady=2)
         row_widgets.append(hostname_label)
         
+        # Friendly Name (new column)
+        friendly_name_label = ctk.CTkLabel(self.table_frame, text=device.get('friendly_name', ''))
+        friendly_name_label.grid(row=row_num, column=5, padx=5, pady=2)
+        row_widgets.append(friendly_name_label)
+
         # Manufacturer
         manufacturer_label = ctk.CTkLabel(self.table_frame, text=device.get('manufacturer', 'Unknown'))
-        manufacturer_label.grid(row=row_num, column=4, padx=5, pady=2)
+        manufacturer_label.grid(row=row_num, column=6, padx=5, pady=2)
         row_widgets.append(manufacturer_label)
         
         # Response Time
@@ -1299,7 +1322,7 @@ class NetworkMonitorApp:
             text=f"{response_ms:.0f}ms",
             text_color=response_color
         )
-        response_label.grid(row=row_num, column=5, padx=5, pady=2)
+        response_label.grid(row=row_num, column=7, padx=5, pady=2)
         row_widgets.append(response_label)
         
         # Web Service (clickable)
@@ -1312,24 +1335,44 @@ class NetworkMonitorApp:
                 height=24,
                 command=lambda: webbrowser.open(web_service)
             )
-            web_btn.grid(row=row_num, column=6, padx=5, pady=2)
+            web_btn.grid(row=row_num, column=8, padx=5, pady=2)
             row_widgets.append(web_btn)
         else:
             web_label = ctk.CTkLabel(self.table_frame, text="None")
-            web_label.grid(row=row_num, column=6, padx=5, pady=2)
+            web_label.grid(row=row_num, column=8, padx=5, pady=2)
             row_widgets.append(web_label)
         
-        # Actions button
-        actions_btn = ctk.CTkButton(
-            self.table_frame,
+        # Actions buttons (replacing dropdown)
+        actions_frame = ctk.CTkFrame(self.table_frame)
+        actions_frame.grid(row=row_num, column=9, padx=5, pady=2)
+
+        # Details button
+        details_btn = ctk.CTkButton(
+            actions_frame,
             text="Details",
             width=60,
-            height=24,
-            command=lambda: self.show_device_details(device)
+            height=20,
+            command=lambda dev=device: self.show_device_details(dev)
         )
-        actions_btn.grid(row=row_num, column=7, padx=5, pady=2)
-        row_widgets.append(actions_btn)
-        
+        details_btn.grid(row=0, column=0, padx=2, pady=1)
+
+        # Nmap Scan button
+        nmap_btn = ctk.CTkButton(
+            actions_frame,
+            text="Nmap",
+            width=50,
+            height=20,
+            command=lambda dev=device: self.show_nmap_dialog(dev.get('ip'))
+        )
+        nmap_btn.grid(row=0, column=1, padx=2, pady=1)
+
+        row_widgets.append(actions_frame)
+
+        # Notes (new column)
+        notes_label = ctk.CTkLabel(self.table_frame, text=device.get('notes', ''))
+        notes_label.grid(row=row_num, column=10, padx=5, pady=2)
+        row_widgets.append(notes_label)
+
         self.device_rows.append(row_widgets)
 
     def toggle_device_selection(self, device, selected):

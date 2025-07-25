@@ -1,0 +1,85 @@
+{
+ "version": "auto-py-to-exe-configuration_v1",
+ "pyinstallerOptions": [
+  {
+   "optionDest": "noconfirm",
+   "value": true
+  },
+  {
+   "optionDest": "filenames",
+   "value": "C:/Users/Jason/PycharmProjects/NetworkMonitor/NetworkMonitor_CTk_Full.py"
+  },
+  {
+   "optionDest": "onefile",
+   "value": false
+  },
+  {
+   "optionDest": "console",
+   "value": false
+  },
+  {
+   "optionDest": "icon_file",
+   "value": "C:/Users/Jason/PycharmProjects/NetworkMonitor/I.T-Assistant.ico"
+  },
+  {
+   "optionDest": "name",
+   "value": "I.T Assistant"
+  },
+  {
+   "optionDest": "clean_build",
+   "value": true
+  },
+  {
+   "optionDest": "optimize",
+   "value": "1"
+  },
+  {
+   "optionDest": "strip",
+   "value": false
+  },
+  {
+   "optionDest": "noupx",
+   "value": false
+  },
+  {
+   "optionDest": "disable_windowed_traceback",
+   "value": false
+  },
+  {
+   "optionDest": "uac_admin",
+   "value": false
+  },
+  {
+   "optionDest": "uac_uiaccess",
+   "value": false
+  },
+  {
+   "optionDest": "argv_emulation",
+   "value": false
+  },
+  {
+   "optionDest": "bootloader_ignore_signals",
+   "value": false
+  },
+  {
+   "optionDest": "datas",
+   "value": "C:/Users/Jason/PycharmProjects/NetworkMonitor/.venv/Lib/site-packages/manuf;manuf/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "C:/Users/Jason/PycharmProjects/NetworkMonitor/.venv/Lib/site-packages/manuf-1.1.5.dist-info;manuf-1.1.5.dist-info/"
+  },
+  {
+   "optionDest": "datas",
+   "value": "C:/Users/Jason/PycharmProjects/NetworkMonitor/I.T-Assistant.ico;."
+  },
+  {
+   "optionDest": "datas",
+   "value": "C:/Users/Jason/PycharmProjects/NetworkMonitor/I.T-Assistant.png;."
+  }
+ ],
+ "nonPyinstallerOptions": {
+  "increaseRecursionLimit": true,
+  "manualArguments": ""
+ }
+}
