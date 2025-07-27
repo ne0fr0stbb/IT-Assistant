@@ -1,212 +1,252 @@
-# NetworkMonitor Build Guide
+# I.T Assistant - Network Monitor Build Guide
 
-## Quick Start
-To build the executable, simply run:
-```batch
-build.bat
-```
+## Application Overview
 
-Or manually:
-```batch
-cxfreeze --clean NetworkMonitor.py --target-dir dist
-```
+**I.T Assistant** is a comprehensive network monitoring and management tool built with CustomTkinter. The application features modern Material UI themes, real-time device monitoring, network scanning, and advanced network management capabilities.
 
-## Build Options
+### Current Application State
 
-### 1. **Single File Executable (Current)**
-- **File**: `NetworkMonitor.spec`
-- **Size**: ~9MB
-- **Speed**: Fast startup
-- **Distribution**: Single .exe file
+The application has evolved significantly and now includes:
 
-### 2. **Optimized Build (Smaller Size)**
-If you want a smaller executable, modify the spec file:
-```python
-# In NetworkMonitor.spec, change:
-upx=True,  # Keep compression
-excludes=[
-    'matplotlib',
-    'numpy.testing', 
-    'tkinter',
-    'unittest',
-    'pdb',
-    'doctest',
-    'difflib',
-    'email',
-    'html',
-    'http',
-    'urllib3',
-    'xml',
-]
-```
+#### Core Features
+- **Network Device Discovery**: ARP-based scanning with automatic network detection
+- **Live Device Monitoring**: Real-time ping monitoring with graphical displays
+- **Internet Speed Testing**: Built-in speedtest functionality
+- **Nmap Integration**: Multiple scan types with dedicated dialog interface
+- **Profile Management**: Device profiles with friendly names and notes
+- **System Tray Support**: Minimize to system tray functionality
+- **Email Alerts**: Network monitoring alerts via email
+- **Settings Management**: Persistent application settings
 
-### 3. **Debug Build**
-For troubleshooting, use:
-```python
-# In NetworkMonitor.spec, change:
-debug=True,
-console=True,  # Shows console for debugging
-```
+#### User Interface Updates
+- **Actions Buttons**: The tree view actions are now individual buttons instead of dropdown:
+  - **Details Button**: Shows comprehensive device information
+  - **Nmap Button**: Opens the nmap dialog window for the selected device
+- **Enhanced Device Table**: Includes Profile, Friendly Name, and Notes columns
+- **Responsive Design**: Proper window scaling and theme switching
+- **Modern Styling**: CustomTkinter-based interface with dark/light theme support
 
 ## Build Requirements
 
-### Essential Dependencies
-```
+### Python Dependencies
+```txt
 customtkinter>=5.2
 matplotlib>=3.5
-pysnmp>=7.0
+pysnmp>=4.4
 speedtest-cli>=2.1
 manuf
+psutil
+scapy
 ping3
-cx_Freeze>=6.0
+numpy<2
+pystray
 ```
 
-### Install All Dependencies
+### System Requirements
+- **Python**: 3.7 or higher
+- **Operating System**: Windows, Linux, or macOS
+- **Nmap**: Optional but recommended for advanced scanning features
+- **Administrator/Root Privileges**: Required for some network scanning features
+
+## File Structure
+
+### Core Application Files
+- `NetworkMonitor_CTk_Full.py` - Main application file
+- `settings.py` - Settings management system
+- `settings_manager.py` - Settings dialog interface
+- `live_monitor.py` - Real-time device monitoring
+- `nmap_monitor.py` - Nmap integration module
+- `system_tray.py` - System tray functionality
+- `profile_manager.py` - Device profile management
+- `email_alert_manager.py` - Email notification system
+- `network.db` - SQLite database for profiles and settings
+
+### Build Files
+- `build_pyinstaller.bat` - Windows build script
+- `pyinstaller config.json` - PyInstaller configuration
+- `requirements.txt` - Python dependencies
+
+### Assets
+- `I.T-Assistant.ico` - Application icon
+- `I.T-Assistant.png` - Application logo
+
+## Quick Build Instructions
+
+### Method 1: Auto-Py-to-Exe with Config (Recommended)
+
+The project includes a pre-configured PyInstaller configuration file that can be imported into auto-py-to-exe for easy GUI-based building.
+
+#### Step 1: Install Auto-Py-to-Exe
 ```batch
+pip install auto-py-to-exe
+```
+
+#### Step 2: Launch Auto-Py-to-Exe
+```batch
+auto-py-to-exe
+```
+
+#### Step 3: Import Configuration
+1. In the auto-py-to-exe interface, click "Import Config" (usually in the top-right)
+2. Navigate to your project folder and select `pyinstaller config.json`
+3. The configuration will automatically populate all settings:
+   - **Script Location**: NetworkMonitor_CTk_Full.py
+   - **One Directory**: Selected (creates folder with executable and dependencies)
+   - **Window Based**: Selected (no console window)
+   - **Icon**: I.T-Assistant.ico
+   - **Name**: I.T Assistant
+   - **Clean Build**: Enabled
+   - **Optimization**: Level 1
+
+#### Step 4: Build
+1. Verify all settings are correct
+2. Click "Convert .py to .exe"
+3. The build process will start and show progress
+4. Once complete, find your executable in the `output/I.T Assistant/` folder
+
+#### Step 5: Test
+Navigate to `output/I.T Assistant/` and run `I.T Assistant.exe`
+
+### Method 2: Automated Batch Build
+```batch
+# Windows
+build_pyinstaller.bat
+```
+
+### Method 3: Manual PyInstaller Build
+```batch
+# Install PyInstaller if not already installed
+pip install pyinstaller
+
+# Install dependencies
 pip install -r requirements.txt
-pip install cx_Freeze
+
+# Clean previous builds
+rmdir /s /q dist build
+
+# Build application
+pyinstaller --clean --onedir --windowed ^
+    --icon=I.T-Assistant.ico ^
+    --name="I.T Assistant" ^
+    --add-data="I.T-Assistant.png;." ^
+    --add-data="I.T-Assistant.ico;." ^
+    --hidden-import=pystray ^
+    --hidden-import=PIL ^
+    --hidden-import=matplotlib ^
+    --hidden-import=scapy ^
+    NetworkMonitor_CTk_Full.py
 ```
 
-## Build Process
+## Configuration Details
 
-1. **Clean Previous Builds**
-   ```batch
-   rmdir /s /q dist
-   rmdir /s /q build
-   ```
+### Pre-configured Settings (pyinstaller config.json)
+The included configuration file sets up the following optimized build settings:
 
-2. **Run Build**
-   ```batch
-   cxfreeze --clean NetworkMonitor.py --target-dir dist
-   ```
+- **Build Type**: One Directory (--onedir) - Creates a folder with the executable and all dependencies
+- **Console**: Disabled (--windowed) - No console window appears
+- **Icon**: I.T-Assistant.ico - Custom application icon
+- **Name**: "I.T Assistant" - Final executable name
+- **Clean Build**: Enabled - Removes previous build artifacts
+- **Optimization**: Level 1 - Basic Python optimization
+- **UPX Compression**: Enabled - Reduces file size
 
-3. **Test Executable**
-   ```batch
-   dist\NetworkMonitor.exe
-   ```
+### Why Auto-Py-to-Exe is Recommended
 
-## Troubleshooting
-
-### Common Issues
-
-**Missing Dependencies**
-```
-ERROR: Hidden import 'module' not found
-```
-**Solution**: Add to `hiddenimports` in the spec file
-
-**Large File Size**
-**Solution**: Add modules to `excludes` list
-
-**Slow Startup**
-**Solution**: Use `--onedir` instead of `--onefile`
-
-**Runtime Errors**
-**Solution**: Enable debug mode and check console output
-
-### Performance Tips
-
-1. **Exclude Unused Modules**: Add unnecessary modules to `excludes`
-2. **Use UPX Compression**: Keep `upx=True` 
-3. **Hidden Imports**: Only include necessary modules
-4. **Optimize Python**: Use `python -O` for optimized bytecode
+1. **Visual Interface**: Easy-to-use GUI instead of command line
+2. **Configuration Management**: Save and reuse build settings
+3. **Real-time Preview**: See the PyInstaller command as you configure
+4. **Error Handling**: Better error messages and debugging information
+5. **Progress Tracking**: Visual progress bar during build process
+6. **Cross-platform**: Works on Windows, macOS, and Linux
 
 ## Distribution
 
-### What to Include
-- `NetworkMonitor.exe` - Main executable
-- `README.md` - User instructions
-- Any additional data files (if needed)
+### Windows Installer
+The project includes an Inno Setup script for creating a Windows installer:
+- Location: `Windows Installer/install_script.iss`
+- Output: `ITAssistantSetup.exe`
 
-### System Requirements
-- Windows 7/8/10/11 (64-bit)
-- No Python installation required
-- ~50MB disk space
-- Internet connection (for speed tests and network scanning)
+### Portable Distribution
+The built executable can run as a portable application without installation.
 
-### Installation
-1. Download `NetworkMonitor.exe`
-2. Run as Administrator (for network scanning features)
-3. Windows may show security warning - click "More info" → "Run anyway"
+## Module Dependencies and Features
 
-## Build Variants
+### Required Modules
+- **CustomTkinter**: Modern UI framework
+- **psutil**: System and network information
+- **matplotlib**: Real-time monitoring graphs
+- **sqlite3**: Profile and settings database
 
-### Development Build
-```batch
-cxfreeze --debug --console NetworkMonitorGUI.py
-```
+### Optional Modules (with graceful degradation)
+- **scapy**: Advanced ARP scanning (falls back to ping)
+- **manuf**: MAC address manufacturer lookup
+- **speedtest-cli**: Internet speed testing
+- **pystray**: System tray integration
+- **nmap**: Advanced network scanning
 
-### Production Build  
-```batch
-cxfreeze --clean --onefile --noconsole NetworkMonitor.py
-```
+### Feature Availability
+The application detects available modules at runtime and adjusts functionality accordingly:
+- Missing `scapy`: Falls back to ping-based scanning
+- Missing `speedtest-cli`: Speed test feature disabled
+- Missing `pystray`: No system tray support
+- Missing `nmap`: Nmap scanning unavailable with installation instructions
 
-### Portable Build
-```batch
-cxfreeze --clean --onedir NetworkMonitor.py
-```
+## Troubleshooting
 
-## File Structure After Build
+### Common Build Issues
 
-```
-NetworkMonitor/
-├── dist/
-│   └── NetworkMonitor.exe          # Final executable
-├── build/                          # Temporary build files
-├── NetworkMonitor.spec             # Build configuration
-├── build.bat                       # Build script
-└── BUILD_GUIDE.md                  # This guide
-```
-
-## Advanced Options
-
-### Custom Icon
-1. Get a `.ico` file
-2. In `NetworkMonitor.spec`, change:
-   ```python
-   icon='path/to/icon.ico'
+1. **Missing Dependencies**
+   ```batch
+   pip install -r requirements.txt
    ```
 
-### Version Information
-1. Create `version.txt`:
-   ```
-   VSVersionInfo(
-     ffi=FixedFileInfo(
-       filevers=(1,0,0,0),
-       prodvers=(1,0,0,0),
-       mask=0x3f,
-       flags=0x0,
-       OS=0x4,
-       fileType=0x1,
-       subtype=0x0,
-       date=(0, 0)
-     ),
-     kids=[
-       StringFileInfo([
-         StringTable('040904B0', [
-           StringStruct('CompanyName', 'Your Company'),
-           StringStruct('FileDescription', 'Network Monitor'),
-           StringStruct('FileVersion', '1.0.0.0'),
-           StringStruct('ProductName', 'NetworkMonitor'),
-           StringStruct('ProductVersion', '1.0.0.0')])
-       ]), 
-       VarFileInfo([VarStruct('Translation', [1033, 1200])])
-     ]
-   )
+2. **PyInstaller Not Found**
+   ```batch
+   pip install pyinstaller
    ```
 
-2. In spec file:
-   ```python
-   version_file='version.txt'
-   ```
+3. **Permission Issues (Windows)**
+   - Run command prompt as Administrator
+   - Disable antivirus temporarily during build
 
-## Success Criteria
+4. **Large File Size**
+   - Use `--exclude-module` flags for unused modules
+   - Consider using `--onedir` instead of `--onefile`
 
-✅ Executable builds without errors
-✅ File size under 15MB  
-✅ Starts in under 3 seconds
-✅ All GUI features work
-✅ Network scanning works
-✅ Speed test works
-✅ No console window appears
-✅ Works on clean Windows systems
+### Runtime Issues
+
+1. **Network Scanning Failures**
+   - Ensure administrator/root privileges
+   - Check firewall settings
+   - Verify network interface detection
+
+2. **Nmap Not Found**
+   - Install nmap from https://nmap.org/download.html
+   - Add nmap to system PATH
+   - Restart application after installation
+
+3. **System Tray Issues**
+   - Install pystray: `pip install pystray`
+   - Check system tray settings in OS
+
+## Development Notes
+
+### Code Structure
+- **Modular Design**: Features are separated into individual modules
+- **Graceful Degradation**: Missing optional dependencies don't break core functionality
+- **Thread Safety**: Network operations use proper threading
+- **Error Handling**: Comprehensive error handling with user-friendly messages
+
+### Testing
+Individual test files are available for debugging specific components:
+- `test_gui_scan.py` - GUI scanning functionality
+- `test_email_functionality.py` - Email alert system
+- `test_buttons.py` - UI button functionality
+- Various other test files for specific features
+
+### Database
+- **SQLite Database**: `network.db` stores device profiles and settings
+- **Automatic Creation**: Database is created automatically on first run
+- **Profile Management**: Devices can be saved to profiles with custom names and notes
+
+This build guide reflects the current state of the I.T Assistant application as of July 2025, including all implemented features and current UI design with individual action buttons instead of dropdown menus.
