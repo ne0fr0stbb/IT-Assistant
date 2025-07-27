@@ -59,6 +59,7 @@ class SettingsDialog:
         self.create_monitor_tab()
         self.create_interface_tab()
         self.create_network_tab()
+        self.create_profile_tab()
         self.create_alerts_tab()
 
         # Create button frame
@@ -413,6 +414,46 @@ class SettingsDialog:
         self.dns_text = ctk.CTkTextbox(dns_frame, height=60)
         self.dns_text.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
         self.setting_vars["network_dns_servers"] = self.dns_text
+
+    def create_profile_tab(self):
+        """Create profile settings tab"""
+        tab = self.tabview.add("Profile")
+
+        scroll_frame = ctk.CTkScrollableFrame(tab, label_text="Profile Settings")
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Default Profile
+        self.create_setting_row(
+            scroll_frame, 0,
+            "Default Profile:",
+            "Select a default profile to load on startup",
+            "profile_default",
+            "combobox",
+            values=self.load_profiles()
+        )
+
+        # Save the selected default profile
+        selected_profile_var = self.setting_vars["profile_default"]
+        selected_profile_var.trace_add("write", self.save_default_profile)
+
+    def save_default_profile(self, *args):
+        """Save profile_default setting when updated"""
+        selected_profile = self.setting_vars["profile_default"].get()
+        settings_manager.update_setting('interface', 'default_profile', selected_profile)
+
+    def load_profiles(self):
+        """Load profile names from the database or file"""
+        try:
+            import sqlite3
+            conn = sqlite3.connect('network.db')
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT Profile FROM Profile ORDER BY Profile")
+            profiles = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            # Add option for no default profile
+            return ["[No default profile]"] + profiles if profiles else ["[No default profile]"]
+        except Exception:
+            return ["[No default profile]"]
 
     def create_alerts_tab(self):
         """Create alerts settings tab"""
@@ -845,6 +886,11 @@ class SettingsDialog:
         self.setting_vars["alerts_new_device"].set(self.settings.alerts.alert_types["new_device"])
         self.setting_vars["alerts_network_change"].set(self.settings.alerts.alert_types["network_change"])
 
+        # Profile settings
+        if "profile_default" in self.setting_vars:
+            default_profile = self.settings.interface.default_profile or "[No default profile]"
+            self.setting_vars["profile_default"].set(default_profile)
+
     def apply_settings(self):
         """Apply settings without closing dialog"""
         if self.save_current_settings():
@@ -937,6 +983,13 @@ class SettingsDialog:
                 "network_change": self.setting_vars["alerts_network_change"].get()
             }
             settings_manager.update_setting("alerts", "alert_types", alert_types)
+
+            # Profile settings
+            if "profile_default" in self.setting_vars:
+                profile_default = self.setting_vars["profile_default"].get()
+                if profile_default == "[No default profile]":
+                    profile_default = ""
+                settings_manager.update_setting("interface", "default_profile", profile_default)
 
             # Save to file
             settings_manager.save_settings()

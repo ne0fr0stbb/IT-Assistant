@@ -47,6 +47,7 @@ class InterfaceSettings:
     auto_save_reports: bool = False
     show_tooltips: bool = True
     confirm_exit: bool = True
+    default_profile: str = ""  # Default profile to load on startup
 
 
 @dataclass

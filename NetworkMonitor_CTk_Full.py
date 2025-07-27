@@ -626,15 +626,23 @@ class NetworkMonitorApp:
         else:
             self.tray_manager = None
 
-        # Setup UI
+# Setup UI
         self.setup_ui()
         self.setup_menu()
+        
+        # Setup profile buttons
+        self.setup_profile_buttons()
         
         # Auto-detect network
         self.auto_detect_network()
         
-        # Start a thread to get external IP
+# Start a thread to get external IP
         threading.Thread(target=self.get_external_ip, daemon=True).start()
+        
+    def setup_profile_buttons(self):
+        """Setup profile buttons"""
+        from profile_manager import setup_profile_buttons
+        self.profile_manager = setup_profile_buttons(self)
     
     def on_window_resize(self, event):
         """Handle window resize event to save size"""
@@ -800,14 +808,14 @@ class NetworkMonitorApp:
         # Title
         title_label = ctk.CTkLabel(
             self.sidebar, 
-            text="I.T Assistant",
+            text="Tech Assistant",
             font=ctk.CTkFont(size=18, weight="bold")  # Reduced font size
         )
         title_label.grid(row=1, column=0, padx=10, pady=(4, 2), sticky="ew")  # Reduced padding
 
         subtitle_label = ctk.CTkLabel(
             self.sidebar, 
-            text="Network Monitor",
+            text="Network Management Tool",
             font=ctk.CTkFont(size=13)  # Reduced font size
         )
         subtitle_label.grid(row=2, column=0, padx=10, pady=(0, 10), sticky="ew")  # Reduced padding
@@ -980,7 +988,7 @@ class NetworkMonitorApp:
         self.main_frame = ctk.CTkFrame(self.root)
         self.main_frame.grid(row=1, column=1, padx=20, pady=20, sticky="nsew")
         self.main_frame.grid_columnconfigure(0, weight=1)
-        self.main_frame.grid_rowconfigure(2, weight=1)
+        self.main_frame.grid_rowconfigure(3, weight=1)  # Changed from 2 to 3 to accommodate profile buttons
         
         # Info label
         self.info_label = ctk.CTkLabel(
@@ -1264,6 +1272,26 @@ class NetworkMonitorApp:
         
         # Reset summary
         self.summary_label.configure(text="Devices found: 0 | Problematic (>500ms): 0")
+        
+        # Update loaded profile label if profile manager exists
+        if hasattr(self, 'profile_manager') and hasattr(self.profile_manager, 'loaded_profile_label'):
+            self.profile_manager.loaded_profile_label.configure(text="No profile loaded")
+    
+    def refresh_device_table(self):
+        """Refresh the device table by clearing and re-adding all devices"""
+        # Clear only the widgets, not the device data
+        for row in self.device_rows:
+            for widget in row:
+                widget.destroy()
+        self.device_rows.clear()
+        
+        # Re-add all devices to the table
+        for device in self.all_devices:
+            self.add_device_to_table(device)
+            
+        # Update summary
+        problematic = sum(1 for d in self.all_devices if d.get('response_time', 0) * 1000 > 500)
+        self.summary_label.configure(text=f"Devices found: {len(self.all_devices)} | Problematic (>500ms): {problematic}")
     
     def add_device_to_table(self, device):
         """Add device to table"""
@@ -1368,10 +1396,20 @@ class NetworkMonitorApp:
 
         row_widgets.append(actions_frame)
 
-        # Notes (new column)
-        notes_label = ctk.CTkLabel(self.table_frame, text=device.get('notes', ''))
-        notes_label.grid(row=row_num, column=10, padx=5, pady=2)
-        row_widgets.append(notes_label)
+        # Notes button (new column)
+        notes_text = device.get('notes', '').strip()
+        has_notes = bool(notes_text)
+        
+        notes_btn = ctk.CTkButton(
+            self.table_frame,
+            text="View Notes" if has_notes else "Add Notes",
+            width=80,
+            height=24,
+            fg_color="#4CAF50" if has_notes else None,  # Green if has notes
+            command=lambda dev=device: self.show_notes_dialog(dev)
+        )
+        notes_btn.grid(row=row_num, column=10, padx=5, pady=2)
+        row_widgets.append(notes_btn)
 
         self.device_rows.append(row_widgets)
 
@@ -1634,6 +1672,124 @@ Status: {device.get('status', 'Unknown')}
         )
         details_label.pack(padx=20, pady=20, fill="both", expand=True)
     
+    def show_notes_dialog(self, device):
+        """Show notes dialog for viewing/editing device notes"""
+        import sqlite3
+        
+        notes_window = ctk.CTkToplevel(self.root)
+        notes_window.title(f"Device Notes - {device['ip']}")
+        notes_window.geometry("500x400")
+        notes_window.transient(self.root)
+        notes_window.grab_set()  # Make modal
+        
+        # Center the window
+        notes_window.update_idletasks()
+        x = (notes_window.winfo_screenwidth() // 2) - (notes_window.winfo_width() // 2)
+        y = (notes_window.winfo_screenheight() // 2) - (notes_window.winfo_height() // 2)
+        notes_window.geometry(f"+{x}+{y}")
+        
+        # Device info frame
+        info_frame = ctk.CTkFrame(notes_window)
+        info_frame.pack(fill="x", padx=20, pady=(20, 10))
+        
+        # Display device info
+        device_info = f"IP: {device['ip']} | MAC: {device.get('mac', 'Unknown')} | Hostname: {device.get('hostname', 'Unknown')}"
+        info_label = ctk.CTkLabel(
+            info_frame,
+            text=device_info,
+            font=ctk.CTkFont(size=12)
+        )
+        info_label.pack(pady=5)
+        
+        # Notes text area
+        notes_label = ctk.CTkLabel(
+            notes_window,
+            text="Notes:",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        notes_label.pack(anchor="w", padx=20, pady=(10, 5))
+        
+        notes_textbox = ctk.CTkTextbox(
+            notes_window,
+            height=200,
+            font=ctk.CTkFont(size=12)
+        )
+        notes_textbox.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        
+        # Load existing notes
+        notes_textbox.insert("1.0", device.get('notes', ''))
+        
+        # Button frame
+        button_frame = ctk.CTkFrame(notes_window)
+        button_frame.pack(fill="x", padx=20, pady=(10, 20))
+        
+        def save_notes():
+            """Save notes to database and update device"""
+            new_notes = notes_textbox.get("1.0", "end-1c").strip()
+            
+            # Update device object
+            device['notes'] = new_notes
+            
+            # If device has a profile, update in database
+            if device.get('profile'):
+                try:
+                    conn = sqlite3.connect('network.db')
+                    cursor = conn.cursor()
+                    
+                    # Update notes in database
+                    cursor.execute("""
+                        UPDATE Profile 
+                        SET Notes = ?
+                        WHERE Profile = ? AND MACAddress = ?
+                    """, (new_notes, device['profile'], device.get('mac', '')))
+                    
+                    conn.commit()
+                    conn.close()
+                    
+                    messagebox.showinfo("Success", "Notes saved successfully!")
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to save notes: {str(e)}")
+            else:
+                # Device not in profile, just update in memory
+                messagebox.showinfo("Note", "Notes saved for this session. Save device to profile to persist notes.")
+            
+            # Refresh the device table to update the notes button
+            self.refresh_device_table()
+            notes_window.destroy()
+        
+        def clear_notes():
+            """Clear the notes text area"""
+            notes_textbox.delete("1.0", "end")
+            notes_textbox.focus()
+        
+        # Buttons
+        save_btn = ctk.CTkButton(
+            button_frame,
+            text="Save",
+            command=save_notes,
+            width=100
+        )
+        save_btn.pack(side="left", padx=5)
+        
+        clear_btn = ctk.CTkButton(
+            button_frame,
+            text="Clear",
+            command=clear_notes,
+            width=100
+        )
+        clear_btn.pack(side="left", padx=5)
+        
+        cancel_btn = ctk.CTkButton(
+            button_frame,
+            text="Cancel",
+            command=notes_window.destroy,
+            width=100
+        )
+        cancel_btn.pack(side="left", padx=5)
+        
+        # Focus on text area
+        notes_textbox.focus()
+    
     def open_live_monitor(self):
         """Open live monitoring dialog using the refactored LiveMonitor class"""
         if not LIVE_MONITOR_AVAILABLE:
@@ -1695,12 +1851,12 @@ Status: {device.get('status', 'Unknown')}
     def show_about(self):
         """Show about dialog"""
         about_window = ctk.CTkToplevel(self.root)
-        about_window.title("About I.T Assistant")
+        about_window.title("About Tech Assistant")
         about_window.geometry("420x320")
         about_window.transient(self.root)
 
         about_text = """
-I.T Assistant v1.0
+Tech Assistant v1.0
 
 A modern network scanner and live device monitor.
 Features: device discovery, latency/uptime monitoring, 
