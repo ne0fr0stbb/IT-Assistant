@@ -21,28 +21,50 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import threading
 import time
-import subprocess
-import socket
-import psutil
-from datetime import datetime, timedelta
-import json
-import os
 import sys
 import csv
 import webbrowser
 import platform
-import re
-import ipaddress
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
-import math
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
 import numpy as np
 from PIL import Image
+import urllib.request
+import subprocess
+import socket
+import psutil  # For interface detection
+from datetime import datetime, timedelta
+from collections import deque
+import ipaddress
+import math
+import re
+
+# Import custom modules
+from network_scanner import NetworkScanner
+
+# Import SSH functionality
+try:
+    from ssh_client import SSHClient
+    ssh_client_module = SSHClient()
+    SSH_AVAILABLE = ssh_client_module.is_available()
+except ImportError:
+    SSH_AVAILABLE = False
+    ssh_client_module = None
+
+# Import Nmap functionality
+try:
+    from nmap_runner import NmapRunner
+    nmap_runner = NmapRunner()
+    NMAP_AVAILABLE = True
+except ImportError:
+    NMAP_AVAILABLE = False
+    nmap_runner = None
+
+# Import speed test functionality
+try:
+    from speed_test_runner import SpeedTestRunner
+    SPEEDTEST_AVAILABLE = True
+except ImportError:
+    SPEEDTEST_AVAILABLE = False
 
 # Import settings system
 try:
@@ -52,344 +74,21 @@ try:
 except ImportError:
     SETTINGS_AVAILABLE = False
 
-# Import nmap monitor module
-try:
-    from nmap_monitor import NmapMonitor
-    NMAP_AVAILABLE = True
-except ImportError:
-    NMAP_AVAILABLE = False
-
-# Import system tray module
+# Try to import system tray module
 try:
     from system_tray import SystemTrayManager
     SYSTRAY_AVAILABLE = True
 except ImportError:
     SYSTRAY_AVAILABLE = False
 
-# Import live monitor module
+# Try to import live monitor module
 try:
     from live_monitor import LiveMonitor
     LIVE_MONITOR_AVAILABLE = True
 except ImportError:
     LIVE_MONITOR_AVAILABLE = False
 
-# Try to import advanced modules with fallbacks
-try:
-    from scapy.layers.l2 import ARP, Ether, srp
-    SCAPY_AVAILABLE = True
-except ImportError:
-    SCAPY_AVAILABLE = False
-
-try:
-    from manuf import manuf
-    MANUF_AVAILABLE = True
-except ImportError:
-    MANUF_AVAILABLE = False
-
-try:
-    import speedtest as speedtest_module
-    SPEEDTEST_AVAILABLE = True
-except ImportError:
-    SPEEDTEST_AVAILABLE = False
-
-# ==================== Utility Classes ====================
-
-class NetworkScanner:
-    """Network scanning functionality"""
-    
-    def __init__(self, ip_range, progress_callback=None, device_callback=None):
-        self.ip_range = ip_range
-        self.progress_callback = progress_callback
-        self.device_callback = device_callback
-        self.scanning = True
-        
-        # Initialize MAC parser if available
-        if MANUF_AVAILABLE:
-            try:
-                self.mac_parser = manuf.MacParser()
-            except:
-                self.mac_parser = None
-        else:
-            self.mac_parser = None
-    
-    def check_web_port(self, ip):
-        """Check if device has web services"""
-        ports = [(80, 'http'), (443, 'https')]
-        for port, scheme in ports:
-            try:
-                with socket.create_connection((str(ip), port), timeout=0.5):
-                    return f"{scheme}://{ip}:{port if port != 80 and port != 443 else ''}"
-            except:
-                continue
-        return None
-    
-    def get_hostname(self, ip):
-        """Get hostname for IP with timeout"""
-        try:
-            # Set a shorter timeout for hostname resolution
-            socket.setdefaulttimeout(2.0)  # 2 second timeout
-            hostname = socket.gethostbyaddr(str(ip))[0]
-            # Reset timeout
-            socket.setdefaulttimeout(None)
-            return hostname if hostname else "Unknown"
-        except (socket.herror, socket.gaierror, socket.timeout):
-            # Reset timeout on error
-            socket.setdefaulttimeout(None)
-            return "Unknown"
-        except Exception:
-            # Reset timeout on any other error
-            socket.setdefaulttimeout(None)
-            return "Unknown"
-
-    def get_manufacturer(self, mac):
-        """Get manufacturer from MAC with improved error handling"""
-        if not mac or mac == 'Unknown':
-            return "Unknown"
-
-        if self.mac_parser:
-            try:
-                # Clean the MAC address format
-                clean_mac = mac.replace('-', ':').replace('.', ':').upper()
-                manufacturer = self.mac_parser.get_manuf(clean_mac)
-                return manufacturer if manufacturer else "Unknown"
-            except Exception:
-                return "Unknown"
-        return "Unknown"
-
-    def get_mac_address(self, ip):
-        """Get MAC address using ARP table lookup as fallback"""
-        try:
-            # First try to get MAC from system ARP table
-            if platform.system().lower() == 'windows':
-                result = subprocess.run(['arp', '-a', str(ip)],
-                                      capture_output=True, text=True, timeout=5,
-                                      creationflags=subprocess.CREATE_NO_WINDOW)
-                if result.returncode == 0:
-                    # Parse ARP output to extract MAC
-                    for line in result.stdout.split('\n'):
-                        if str(ip) in line:
-                            # Look for MAC address pattern
-                            import re
-                            mac_match = re.search(r'([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}', line)
-                            if mac_match:
-                                return mac_match.group(0).upper()
-            else:
-                # Linux/Unix systems
-                result = subprocess.run(['arp', '-n', str(ip)],
-                                      capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    for line in result.stdout.split('\n'):
-                        if str(ip) in line:
-                            parts = line.split()
-                            if len(parts) >= 3:
-                                mac = parts[2]
-                                if ':' in mac and len(mac) == 17:
-                                    return mac.upper()
-        except Exception as e:
-            pass
-
-        return "Unknown"
-
-    def arp_scan_ip(self, ip):
-        """ARP scan single IP"""
-        if not self.scanning:
-            return []
-            
-        devices = []
-        
-        if SCAPY_AVAILABLE:
-            try:
-                # Use Scapy for ARP scanning
-                arp = ARP(pdst=str(ip))
-                ether = Ether(dst="ff:ff:ff:ff:ff:ff")
-                packet = ether / arp
-                
-                start_time = time.time()
-                result = srp(packet, timeout=0.5, verbose=0)[0]
-                end_time = time.time()
-                
-                for _, received in result:
-                    ip_addr = received.psrc
-                    mac = received.hwsrc
-                    response_time = end_time - start_time
-                    
-                    web_service = self.check_web_port(ip_addr)
-                    hostname = self.get_hostname(ip_addr)
-                    manufacturer = self.get_manufacturer(mac)
-                    
-                    devices.append({
-                        'ip': ip_addr,
-                        'mac': mac,
-                        'response_time': response_time,
-                        'web_service': web_service,
-                        'hostname': hostname,
-                        'manufacturer': manufacturer,
-                        'status': 'Online',
-                        'profile': '',  # New field for profile
-                        'friendly_name': '',  # New field for friendly name
-                        'notes': ''  # New field for notes
-                    })
-
-                # If ARP scan found no devices, fall back to ping scanning
-                if not devices:
-                    ping_result = self.ping_host_simple(ip)
-                    if ping_result[0]:  # If ping succeeded
-                        hostname = self.get_hostname(ip)
-                        web_service = self.check_web_port(ip)
-                        # Try to get MAC from ARP table
-                        mac = self.get_mac_address(ip)
-                        manufacturer = self.get_manufacturer(mac)
-
-                        devices.append({
-                            'ip': str(ip),
-                            'mac': mac,
-                            'response_time': ping_result[1],  # Use actual ping time
-                            'web_service': web_service,
-                            'hostname': hostname,
-                            'manufacturer': manufacturer,
-                            'status': 'Online',
-                            'profile': '',  # New field for profile
-                            'friendly_name': '',  # New field for friendly name
-                            'notes': ''  # New field for notes
-                        })
-
-            except Exception as e:
-                print(f"ARP scan error for {ip}: {e}")
-                # Fallback to ping scanning if ARP fails
-                ping_result = self.ping_host_simple(ip)
-                if ping_result[0]:  # If ping succeeded
-                    hostname = self.get_hostname(ip)
-                    web_service = self.check_web_port(ip)
-                    # Try to get MAC from ARP table
-                    mac = self.get_mac_address(ip)
-                    manufacturer = self.get_manufacturer(mac)
-
-                    devices.append({
-                        'ip': str(ip),
-                        'mac': mac,
-                        'response_time': ping_result[1],  # Use actual ping time
-                        'web_service': web_service,
-                        'hostname': hostname,
-                        'manufacturer': manufacturer,
-                        'status': 'Online',
-                        'profile': '',  # New field for profile
-                        'friendly_name': '',  # New field for friendly name
-                        'notes': ''  # New field for notes
-                    })
-        else:
-            # Fallback to ping scanning
-            ping_result = self.ping_host_simple(ip)
-            if ping_result[0]:  # If ping succeeded
-                hostname = self.get_hostname(ip)
-                web_service = self.check_web_port(ip)
-                # Try to get MAC from ARP table
-                mac = self.get_mac_address(ip)
-                manufacturer = self.get_manufacturer(mac)
-
-                devices.append({
-                    'ip': str(ip),
-                    'mac': mac,
-                    'response_time': ping_result[1],  # Use actual ping time
-                    'web_service': web_service,
-                    'hostname': hostname,
-                    'manufacturer': manufacturer,
-                    'status': 'Online',
-                    'profile': '',  # New field for profile
-                    'friendly_name': '',  # New field for friendly name
-                    'notes': ''  # New field for notes
-                })
-                
-        return devices
-    
-    def ping_host_simple(self, ip):
-        """Simple ping implementation with response time measurement"""
-        try:
-            if platform.system().lower() == 'windows':
-                start_time = time.time()
-                result = subprocess.run(['ping', '-n', '1', '-w', '1000', str(ip)],
-                                      capture_output=True, text=True, timeout=2, creationflags=subprocess.CREATE_NO_WINDOW)
-                end_time = time.time()
-
-                if result.returncode == 0:
-                    # Try to extract actual ping time from output
-                    output = result.stdout
-                    import re
-                    time_match = re.search(r'time[<=](\d+(?:\.\d+)?)ms', output)
-                    if time_match:
-                        actual_time = float(time_match.group(1)) / 1000  # Convert to seconds
-                        return True, actual_time
-                    elif 'time<1ms' in output.lower():
-                        return True, 0.0005  # 0.5ms
-                    else:
-                        # Fallback to measured time
-                        return True, end_time - start_time
-                else:
-                    return False, None
-            else:
-                start_time = time.time()
-                result = subprocess.run(['ping', '-c', '1', '-W', '1', str(ip)],
-                                      capture_output=True, text=True, timeout=2)
-                end_time = time.time()
-
-                if result.returncode == 0:
-                    # Try to extract actual ping time from output
-                    output = result.stdout
-                    import re
-                    time_match = re.search(r'time=(\d+\.?\d*) ms', output)
-                    if time_match:
-                        actual_time = float(time_match.group(1)) / 1000  # Convert to seconds
-                        return True, actual_time
-                    else:
-                        # Fallback to measured time
-                        return True, end_time - start_time
-                else:
-                    return False, None
-        except:
-            return False, None
-
-    def scan(self):
-        """Main scanning method"""
-        devices = []
-        
-        try:
-            network = ipaddress.ip_network(self.ip_range, strict=False)
-        except ValueError:
-            return devices
-        
-        hosts = list(network.hosts())
-        total = len(hosts)
-        completed = 0
-        
-        try:
-            with ThreadPoolExecutor(max_workers=32) as executor:
-                future_to_ip = {executor.submit(self.arp_scan_ip, ip): ip for ip in hosts}
-                
-                for future in as_completed(future_to_ip):
-                    if not self.scanning:
-                        break
-                        
-                    try:
-                        result_devices = future.result()
-                        for device in result_devices:
-                            devices.append(device)
-                            if self.device_callback:
-                                self.device_callback(device)
-                    except Exception as e:
-                        print(f"Error in scan thread: {e}")
-                    
-                    completed += 1
-                    if self.progress_callback:
-                        percent = int((completed / total) * 100)
-                        self.progress_callback(percent)
-                        
-        except Exception as e:
-            print(f"ThreadPoolExecutor error: {e}")
-        
-        return devices
-    
-    def stop(self):
-        """Stop scanning"""
-        self.scanning = False
+# ==================== UI Elements ====================
 
 class DeviceMonitor:
     """Live device monitoring"""
@@ -464,91 +163,27 @@ class DeviceMonitor:
         except:
             return float('nan'), 'down'
 
-class SpeedTestRunner:
-    """Speed test functionality"""
-    
-    def __init__(self, progress_callback=None, status_callback=None, result_callback=None, error_callback=None):
-        self.progress_callback = progress_callback
-        self.status_callback = status_callback
-        self.result_callback = result_callback
-        self.error_callback = error_callback
-        self.cancelled = False
-    
-    def cancel(self):
-        self.cancelled = True
-    
-    def run_test(self):
-        """Run speed test in thread"""
-        if not SPEEDTEST_AVAILABLE:
-            if self.error_callback:
-                self.error_callback("speedtest-cli not available")
-            return
+# ==================== Icon Helper Function ====================
+
+def set_dialog_icon(dialog_window):
+    """Set the application icon for dialog windows"""
+    try:
+        # Handle frozen application (cx_Freeze)
+        if hasattr(sys, 'frozen') and hasattr(sys, '_MEIPASS'):
+            # PyInstaller frozen app
+            icon_path = os.path.join(sys._MEIPASS, "I.T-Assistant.ico")
+        elif hasattr(sys, 'frozen'):
+            # cx_Freeze frozen app
+            icon_path = os.path.join(os.path.dirname(sys.executable), "I.T-Assistant.ico")
+        else:
+            # Regular Python script
+            icon_path = os.path.join(os.path.dirname(__file__), "I.T-Assistant.ico")
         
-        try:
-            if self.cancelled:
-                return
-            
-            if self.status_callback:
-                self.status_callback("Initializing speed test...")
-            if self.progress_callback:
-                self.progress_callback(10)
-            
-            st = speedtest_module.Speedtest()
-            
-            if self.cancelled:
-                return
-            
-            if self.status_callback:
-                self.status_callback("Finding best server...")
-            if self.progress_callback:
-                self.progress_callback(20)
-            
-            st.get_best_server()
-            
-            if self.cancelled:
-                return
-            
-            if self.status_callback:
-                self.status_callback("Testing download speed...")
-            if self.progress_callback:
-                self.progress_callback(40)
-            
-            download_speed = st.download() / 1_000_000
-            
-            if self.cancelled:
-                return
-            
-            if self.status_callback:
-                self.status_callback("Testing upload speed...")
-            if self.progress_callback:
-                self.progress_callback(70)
-            
-            upload_speed = st.upload() / 1_000_000
-            
-            if self.cancelled:
-                return
-            
-            if self.status_callback:
-                self.status_callback("Finalizing results...")
-            if self.progress_callback:
-                self.progress_callback(90)
-            
-            ping = st.results.ping
-            
-            if not self.cancelled:
-                if self.progress_callback:
-                    self.progress_callback(100)
-                if self.result_callback:
-                    self.result_callback({
-                        'download': download_speed,
-                        'upload': upload_speed,
-                        'ping': ping,
-                        'server': st.results.server
-                    })
-                    
-        except Exception as e:
-            if not self.cancelled and self.error_callback:
-                self.error_callback(str(e))
+        if os.path.exists(icon_path):
+            dialog_window.iconbitmap(icon_path)
+    except Exception as e:
+        # Silently fail - icon is not critical
+        pass
 
 # ==================== Main Application ====================
 
@@ -614,10 +249,8 @@ class NetworkMonitorApp:
         self.last_window_size = (saved_width, saved_height)
 
         # Initialize modules
-        if NMAP_AVAILABLE:
-            self.nmap_monitor = NmapMonitor(self)
-        else:
-            self.nmap_monitor = None
+        self.nmap_runner = nmap_runner
+        self.ssh_client = ssh_client_module
         
         # Initialize system tray
         if SYSTRAY_AVAILABLE:
@@ -663,6 +296,303 @@ class NetworkMonitorApp:
             if current_size != self.last_window_size:
                 set_window_size(current_size[0], current_size[1])
                 self.last_window_size = current_size
+    
+    def on_window_close(self):
+        """Handle window close event - minimize to tray if available, otherwise quit"""
+        if self.tray_manager:
+            # Minimize to system tray instead of closing
+            self.root.withdraw()
+            try:
+                if hasattr(self.tray_manager, 'icon') and self.tray_manager.icon:
+                    self.tray_manager.icon.notify(
+                        "I.T Assistant minimized to tray",
+                        "Double-click to restore or right-click for options"
+                    )
+            except Exception:
+                # Notification failed, but that's okay
+                pass
+        else:
+            # No tray manager available, quit the application
+            self.quit_application()
+    
+    def quit_application(self):
+        """Properly quit the application"""
+        try:
+            # Stop any running monitors
+            if hasattr(self, 'device_monitors'):
+                for monitor in self.device_monitors.values():
+                    try:
+                        monitor.stop()
+                    except Exception:
+                        pass
+                self.device_monitors.clear()
+            
+            # Close any monitor windows
+            if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
+                try:
+                    self.current_monitor_window.destroy()
+                except Exception:
+                    pass
+            
+            # Stop tray manager
+            if self.tray_manager:
+                self.tray_manager.stop()
+            
+            # Close matplotlib plots
+            try:
+                import matplotlib.pyplot as plt
+                plt.close('all')
+            except Exception:
+                pass
+            
+            # Quit the main window
+            self.root.quit()
+            
+        except Exception as e:
+            print(f"Error during application shutdown: {e}")
+            # Force quit if graceful shutdown fails
+            sys.exit(0)
+    
+    def get_external_ip(self):
+        """Get external IP address"""
+        def _get_external_ip():
+            try:
+                import urllib.request
+                with urllib.request.urlopen('https://api.ipify.org', timeout=5) as response:
+                    external_ip = response.read().decode('utf-8')
+                    self.root.after(0, lambda: self.external_ip_label.configure(text=f"External IP: {external_ip}"))
+            except Exception:
+                self.root.after(0, lambda: self.external_ip_label.configure(text="External IP: Unable to detect"))
+        
+        # Run in thread to avoid blocking UI
+        threading.Thread(target=_get_external_ip, daemon=True).start()
+    
+    def update_network_information(self):
+        """Update network information labels"""
+        def _update_info():
+            try:
+                # Get local IP
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                
+                # Calculate subnet
+                ip_parts = local_ip.split('.')
+                subnet = f"{'.'.join(ip_parts[:3])}.0/24"
+                
+                # Get gateway (default route)
+                try:
+                    import psutil
+                    gateways = psutil.net_if_stats()
+                    # Simple gateway detection - usually .1 in the subnet
+                    gateway = f"{'.'.join(ip_parts[:3])}.1"
+                except Exception:
+                    gateway = "Unknown"
+                
+                # Get MAC address of active interface
+                try:
+                    import psutil
+                    interfaces = psutil.net_if_addrs()
+                    mac_addr = "Unknown"
+                    for interface_name, addresses in interfaces.items():
+                        for addr in addresses:
+                            if addr.family == socket.AF_INET and addr.address == local_ip:
+                                # Find MAC address for this interface
+                                for addr2 in addresses:
+                                    if hasattr(addr2, 'address') and ':' in str(addr2.address) and len(str(addr2.address)) == 17:
+                                        mac_addr = str(addr2.address).upper()
+                                        break
+                                break
+                        if mac_addr != "Unknown":
+                            break
+                except Exception:
+                    mac_addr = "Unknown"
+                
+                # Update labels on main thread
+                self.root.after(0, lambda: self.local_ip_label.configure(text=f"Local IP: {local_ip}"))
+                self.root.after(0, lambda: self.subnet_label.configure(text=f"Subnet: {subnet}"))
+                self.root.after(0, lambda: self.gateway_label.configure(text=f"Gateway: {gateway}"))
+                self.root.after(0, lambda: self.mac_label.configure(text=f"MAC: {mac_addr}"))
+                
+                # Test internet connectivity
+                try:
+                    with urllib.request.urlopen('https://www.google.com', timeout=5) as response:
+                        self.root.after(0, lambda: self.internet_status_label.configure(
+                            text="Internet: Connected", text_color="#4CAF50"))
+                except Exception:
+                    self.root.after(0, lambda: self.internet_status_label.configure(
+                        text="Internet: Disconnected", text_color="#F44336"))
+                        
+            except Exception as e:
+                self.root.after(0, lambda: self.local_ip_label.configure(text="Local IP: Detection failed"))
+                self.root.after(0, lambda: self.internet_status_label.configure(
+                    text="Internet: Check failed", text_color="#FF9800"))
+        
+        # Run in thread to avoid blocking UI
+        threading.Thread(target=_update_info, daemon=True).start()
+    
+    def show_file_menu(self):
+        """Show file menu options"""
+        # Create a simple popup menu
+        menu_window = ctk.CTkToplevel(self.root)
+        menu_window.title("File Menu")
+        menu_window.geometry("200x150")
+        menu_window.transient(self.root)
+        menu_window.resizable(False, False)
+        
+        # Position near the button
+        x = self.root.winfo_x() + 50
+        y = self.root.winfo_y() + 80
+        menu_window.geometry(f"+{x}+{y}")
+        
+        ctk.CTkButton(menu_window, text="Export Device List", 
+                     command=lambda: [self.export_device_list(), menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
+        ctk.CTkButton(menu_window, text="Import Device List", 
+                     command=lambda: [self.import_device_list(), menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
+        ctk.CTkButton(menu_window, text="Exit", 
+                     command=lambda: [menu_window.destroy(), self.quit_application()]).pack(pady=5, padx=10, fill="x")
+    
+    def show_options_menu(self):
+        """Show options menu"""
+        menu_window = ctk.CTkToplevel(self.root)
+        menu_window.title("Options Menu")
+        menu_window.geometry("200x120")
+        menu_window.transient(self.root)
+        menu_window.resizable(False, False)
+        
+        # Position near the button
+        x = self.root.winfo_x() + 120
+        y = self.root.winfo_y() + 80
+        menu_window.geometry(f"+{x}+{y}")
+        
+        ctk.CTkButton(menu_window, text="Settings", 
+                     command=lambda: [self.show_settings(), menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
+        ctk.CTkButton(menu_window, text="Preferences", 
+                     command=lambda: [self.show_preferences(), menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
+    
+    def show_about_menu(self):
+        """Show about menu"""
+        self.show_about()
+    
+    def show_about(self):
+        """Show about dialog"""
+        about_window = ctk.CTkToplevel(self.root)
+        about_window.title("About I.T Assistant")
+        about_window.geometry("400x300")
+        about_window.transient(self.root)
+        about_window.grab_set()
+        
+        # Center the window
+        about_window.update_idletasks()
+        x = (about_window.winfo_screenwidth() // 2) - (about_window.winfo_width() // 2)
+        y = (about_window.winfo_screenheight() // 2) - (about_window.winfo_height() // 2)
+        about_window.geometry(f"+{x}+{y}")
+        
+        about_text = """I.T Assistant - Network Monitor
+
+Version: 2.0
+        
+A comprehensive network monitoring and management tool.
+
+Features:
+• Network device discovery
+• Live monitoring with graphs
+• SSH connectivity
+• Speed testing
+• Device notes and profiles
+• System tray integration
+
+Developed with Python and CustomTkinter
+
+© 2024 I.T Assistant"""
+        
+        text_label = ctk.CTkLabel(
+            about_window,
+            text=about_text,
+            justify="left",
+            font=ctk.CTkFont(size=12)
+        )
+        text_label.pack(padx=20, pady=20, fill="both", expand=True)
+        
+        ctk.CTkButton(about_window, text="Close", command=about_window.destroy).pack(pady=10)
+    
+    def export_device_list(self):
+        """Export device list to CSV"""
+        if not self.all_devices:
+            messagebox.showwarning("No Data", "No devices to export")
+            return
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialname=f"device_list_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        )
+        
+        if filename:
+            try:
+                with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(["IP Address", "MAC Address", "Hostname", "Manufacturer", "Response Time (ms)", "Web Service", "Notes"])
+                    
+                    for device in self.all_devices:
+                        writer.writerow([
+                            device['ip'],
+                            device.get('mac', 'Unknown'),
+                            device.get('hostname', 'Unknown'),
+                            device.get('manufacturer', 'Unknown'),
+                            f"{device.get('response_time', 0) * 1000:.1f}",
+                            device.get('web_service', 'None'),
+                            device.get('notes', '')
+                        ])
+                
+                messagebox.showinfo("Success", f"Device list exported to {filename}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export device list: {e}")
+    
+    def import_device_list(self):
+        """Import device list from CSV"""
+        filename = filedialog.askopenfilename(
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        
+        if filename:
+            try:
+                with open(filename, 'r', encoding='utf-8') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    imported_devices = []
+                    
+                    for row in reader:
+                        device = {
+                            'ip': row.get('IP Address', ''),
+                            'mac': row.get('MAC Address', 'Unknown'),
+                            'hostname': row.get('Hostname', 'Unknown'),
+                            'manufacturer': row.get('Manufacturer', 'Unknown'),
+                            'response_time': float(row.get('Response Time (ms)', 0)) / 1000,
+                            'web_service': row.get('Web Service', 'None'),
+                            'notes': row.get('Notes', ''),
+                            'status': 'Imported',
+                            'profile': '',
+                            'friendly_name': ''
+                        }
+                        imported_devices.append(device)
+                
+                self.all_devices.extend(imported_devices)
+                self.batch_add_devices(imported_devices)
+                
+                messagebox.showinfo("Success", f"Imported {len(imported_devices)} devices")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to import device list: {e}")
+    
+    def show_settings(self):
+        """Show settings dialog"""
+        if SETTINGS_AVAILABLE:
+            show_settings_dialog(self.root)
+        else:
+            messagebox.showinfo("Settings", "Settings system not available")
+    
+    def show_preferences(self):
+        """Show preferences dialog"""
+        messagebox.showinfo("Preferences", "Preferences dialog not yet implemented")
 
     def setup_ui(self):
         """Setup main UI"""
@@ -895,9 +825,10 @@ class NetworkMonitorApp:
         # Configure rows for tools frame
         tools_frame.grid_rowconfigure(0, weight=0)  # Title
         tools_frame.grid_rowconfigure(1, weight=1)  # Live Monitor button
-        tools_frame.grid_rowconfigure(2, weight=1)  # Nmap button
-        tools_frame.grid_rowconfigure(3, weight=1)  # Speed test button
-        
+        tools_frame.grid_rowconfigure(2, weight=1)  # SSH button
+        tools_frame.grid_rowconfigure(3, weight=1)  # Nmap button
+        tools_frame.grid_rowconfigure(4, weight=1)  # Speed test button
+
         # Tools title
         ctk.CTkLabel(tools_frame, text="Network Tools:",
                     font=ctk.CTkFont(size=15, weight="bold")).grid(row=0, column=0, padx=8, pady=(8, 4), sticky="w")
@@ -915,6 +846,16 @@ class NetworkMonitorApp:
             font=button_font
         )
         self.live_monitor_btn.grid(row=1, column=0, padx=8, pady=4, sticky="ew")
+
+        # SSH Selected button
+        self.ssh_btn = ctk.CTkButton(
+            tools_frame,
+            text="SSH",
+            command=self.open_ssh_dialog,
+            height=button_height,
+            font=button_font
+        )
+        self.ssh_btn.grid(row=2, column=0, padx=8, pady=4, sticky="ew")
 
         '''
         # Nmap Scan Selected button
@@ -935,8 +876,8 @@ class NetworkMonitorApp:
             height=button_height,
             font=button_font
         )
-        self.speedtest_btn.grid(row=3, column=0, padx=8, pady=(4, 12), sticky="ew")
-        
+        self.speedtest_btn.grid(row=4, column=0, padx=8, pady=(4, 12), sticky="ew")
+
         # Network Information frame
         info_frame = ctk.CTkFrame(self.sidebar)
         info_frame.grid(row=6, column=0, padx=8, pady=8, sticky="nsew")
@@ -988,43 +929,37 @@ class NetworkMonitorApp:
         self.main_frame = ctk.CTkFrame(self.root)
         self.main_frame.grid(row=1, column=1, padx=20, pady=20, sticky="nsew")
         self.main_frame.grid_columnconfigure(0, weight=1)
-        self.main_frame.grid_rowconfigure(3, weight=1)  # Changed from 2 to 3 to accommodate profile buttons
+        self.main_frame.grid_rowconfigure(2, weight=1)  # Device table should expand
         
-        # Info label
-        self.info_label = ctk.CTkLabel(
-            self.main_frame,
-            text="Enter IP range or leave blank for auto-detect",
-            font=ctk.CTkFont(size=14)
-        )
-        self.info_label.grid(row=0, column=0, padx=20, pady=(20, 10), sticky="w")
+        # Profile buttons will be added at row=0 by profile_manager
         
-        # Search and progress frame
-        search_progress_frame = ctk.CTkFrame(self.main_frame)
-        search_progress_frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
-        search_progress_frame.grid_columnconfigure(0, weight=3)  # Search entry weight
-        search_progress_frame.grid_columnconfigure(1, weight=1)  # Search button weight
-        search_progress_frame.grid_columnconfigure(2, weight=1)  # Progress bar weight
+        # Search frame (without progress bar)
+        search_frame = ctk.CTkFrame(self.main_frame)
+        search_frame.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        search_frame.grid_columnconfigure(0, weight=1)  # Search entry weight (reduced)
+        search_frame.grid_columnconfigure(1, weight=0)  # Search button weight
+        search_frame.grid_columnconfigure(2, weight=0)  # Clear button weight
+        search_frame.grid_columnconfigure(3, weight=2)  # Summary label weight
 
-        # Search entry
-        self.search_input = ctk.CTkEntry(search_progress_frame, placeholder_text="IP, MAC, or hostname...")
-        self.search_input.grid(row=0, column=0, padx=(10, 5), pady=5, sticky="ew")
+        # Search entry (half size)
+        self.search_input = ctk.CTkEntry(search_frame, placeholder_text="Search devices...")
+        self.search_input.grid(row=0, column=0, padx=(10, 5), pady=5)
         # Remove the automatic search on typing and add Enter key binding
         self.search_input.bind("<Return>", lambda event: self.perform_search())
 
         # Search button
-        search_button = ctk.CTkButton(search_progress_frame, text="Search", width=70, height=28, command=self.perform_search)
-        search_button.grid(row=0, column=1, padx=(0, 10), pady=5, sticky="ew")
+        search_button = ctk.CTkButton(search_frame, text="Search", width=70, height=28, command=self.perform_search)
+        search_button.grid(row=0, column=1, padx=(0, 5), pady=5)
 
-        self.progress_bar = ctk.CTkProgressBar(search_progress_frame)
-        self.progress_bar.grid(row=0, column=2, padx=(0, 10), pady=5, sticky="ew")
-        self.progress_bar.set(0)
+        # Clear Search button
+        clear_search_button = ctk.CTkButton(search_frame, text="Clear Search", width=90, height=28, command=self.clear_search)
+        clear_search_button.grid(row=0, column=2, padx=(0, 20), pady=5)
 
         self.summary_label = ctk.CTkLabel(
-            search_progress_frame,
+            search_frame,
             text="Devices found: 0 | Problematic (>500ms): 0"
         )
         self.summary_label.grid(row=0, column=3, padx=(0, 10), pady=5, sticky="ew")
-        
         
         # Device table frame
         self.table_frame = ctk.CTkScrollableFrame(
@@ -1032,6 +967,29 @@ class NetworkMonitorApp:
             label_text="Discovered Devices"
         )
         self.table_frame.grid(row=2, column=0, padx=20, pady=10, sticky="nsew")
+        
+        # Create selection controls frame at the top of the scrollable frame
+        selection_controls_frame = ctk.CTkFrame(self.table_frame)
+        selection_controls_frame.grid(row=0, column=0, columnspan=11, padx=0, pady=(0, 10), sticky="ew")
+        
+        # Selection buttons on the right
+        deselect_all_btn = ctk.CTkButton(
+            selection_controls_frame,
+            text="Deselect All",
+            command=self.deselect_all_devices,
+            width=90,
+            height=26
+        )
+        deselect_all_btn.pack(side="right", padx=(5, 10))
+        
+        select_all_btn = ctk.CTkButton(
+            selection_controls_frame,
+            text="Select All",
+            command=self.select_all_devices,
+            width=90,
+            height=26
+        )
+        select_all_btn.pack(side="right", padx=5)
         
         # Configure column weights for equal spacing
         for i in range(11):  # Updated from 8 to 11 for new columns
@@ -1046,16 +1004,22 @@ class NetworkMonitorApp:
                 font=ctk.CTkFont(weight="bold")
             )
             if i == 0:  # Left-justify the "Select" header to match checkbox alignment
-                label.grid(row=0, column=i, padx=5, pady=5, sticky="w")
+                label.grid(row=1, column=i, padx=5, pady=5, sticky="w")
             else:
-                label.grid(row=0, column=i, padx=5, pady=5, sticky="ew")
+                label.grid(row=1, column=i, padx=5, pady=5, sticky="ew")
         
         self.device_rows = []
     
     def create_status_bar(self):
-        """Create status bar"""
-        self.status_frame = ctk.CTkFrame(self.root, height=30, corner_radius=0)
-        self.status_frame.grid(row=2, column=1, sticky="ew", padx=20, pady=(0, 20))
+        """Create status bar with progress bar"""
+        # Status and progress container
+        bottom_frame = ctk.CTkFrame(self.root, corner_radius=0)
+        bottom_frame.grid(row=2, column=1, sticky="ew", padx=20, pady=(0, 20))
+        bottom_frame.grid_columnconfigure(0, weight=1)
+        
+        # Status frame
+        self.status_frame = ctk.CTkFrame(bottom_frame, height=30, corner_radius=0)
+        self.status_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         
         self.status_label = ctk.CTkLabel(
             self.status_frame,
@@ -1063,6 +1027,113 @@ class NetworkMonitorApp:
             font=ctk.CTkFont(size=12)
         )
         self.status_label.pack(side="left", padx=10, pady=5)
+        
+        # Progress bar frame
+        progress_frame = ctk.CTkFrame(bottom_frame, corner_radius=0)
+        progress_frame.grid(row=1, column=0, sticky="ew")
+        progress_frame.grid_columnconfigure(0, weight=1)
+        
+        # Progress bar
+        self.progress_bar = ctk.CTkProgressBar(progress_frame)
+        self.progress_bar.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
+        self.progress_bar.set(0)
+    
+    def get_network_interfaces(self):
+        """Get available network interfaces"""
+        interfaces = []
+        active_interface = None
+        
+        try:
+            import psutil
+            # Get network interfaces
+            net_interfaces = psutil.net_if_addrs()
+            net_stats = psutil.net_if_stats()
+            
+            for interface_name, addresses in net_interfaces.items():
+                # Skip loopback interfaces
+                if 'loopback' in interface_name.lower() or interface_name.lower() == 'lo':
+                    continue
+                
+                # Get IPv4 address
+                ipv4_addr = None
+                for addr in addresses:
+                    if addr.family == socket.AF_INET:
+                        ipv4_addr = addr.address
+                        break
+                
+                if ipv4_addr and not ipv4_addr.startswith('127.') and not ipv4_addr.startswith('169.254.'):
+                    # Check if interface is up
+                    stats = net_stats.get(interface_name)
+                    is_up = stats and stats.isup if stats else False
+                    
+                    interface_info = {
+                        'name': interface_name,
+                        'ip': ipv4_addr,
+                        'display': f"{interface_name} ({ipv4_addr})",
+                        'is_up': is_up
+                    }
+                    
+                    interfaces.append(interface_info)
+                    
+                    # Set as active if it's up and we don't have one yet
+                    if is_up and active_interface is None:
+                        active_interface = interface_info
+            
+            # If no active interface found, try to detect using socket method
+            if not active_interface:
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                        s.connect(("8.8.8.8", 80))
+                        active_ip = s.getsockname()[0]
+                        
+                        # Find interface with this IP
+                        for interface in interfaces:
+                            if interface['ip'] == active_ip:
+                                active_interface = interface
+                                break
+                except Exception:
+                    pass
+            
+        except ImportError:
+            # Fallback if psutil is not available
+            try:
+                # Try to get local IP using socket method
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    
+                    interface_info = {
+                        'name': 'Default',
+                        'ip': local_ip,
+                        'display': f"Default ({local_ip})",
+                        'is_up': True
+                    }
+                    interfaces.append(interface_info)
+                    active_interface = interface_info
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"Error getting network interfaces: {e}")
+        
+        return interfaces, active_interface
+    
+    def on_interface_selected(self, selection):
+        """Handle network interface selection"""
+        if selection == "Auto-Detect":
+            self.auto_detect_network()
+        else:
+            # Find the selected interface
+            for interface in self.available_interfaces:
+                if interface['display'] == selection:
+                    # Update IP input with network range for this interface
+                    ip_parts = interface['ip'].split('.')
+                    network = f"{'.'.join(ip_parts[:3])}.0/24"
+                    
+                    self.ip_input.delete(0, tk.END)
+                    self.ip_input.insert(0, network)
+                    
+                    self.update_status(f"Selected interface {interface['name']}: {network}")
+                    break
     
     def auto_detect_network(self):
         """Auto-detect network range"""
@@ -1137,8 +1208,8 @@ class NetworkMonitorApp:
                 self.ip_input.delete(0, tk.END)
                 self.ip_input.insert(0, network)
                 
-                # Also update the info label to show current status
-                self.info_label.configure(text=f"Ready to scan network: {network}")
+                # Update status to show current network
+                self.update_status(f"Ready to scan network: {network}")
                 
                 # Clear any previous scan results since we're on a new network
                 if hasattr(self, 'all_devices') and self.all_devices:
@@ -1203,7 +1274,7 @@ class NetworkMonitorApp:
         self.scanning = True
         self.scan_btn.configure(text="Stop Scan", fg_color="#d32f2f")
         self.progress_bar.set(0)
-        self.info_label.configure(text=f"Scanning {ip_range}...")
+        self.update_status(f"Scanning {ip_range}...")
         
         # Clear previous results
         self.clear_device_table()
@@ -1219,16 +1290,16 @@ class NetworkMonitorApp:
         if self.scanner:
             self.scanner.stop()
         self.scan_btn.configure(text="Network Scan", fg_color="#1f538d")
-        self.info_label.configure(text="Scan stopped")
         self.update_status("Scan stopped by user")
     
     def scan_network(self, ip_range):
         """Network scanning thread"""
         try:
+            # Disable real-time device updates for better performance
             self.scanner = NetworkScanner(
                 ip_range, 
                 progress_callback=self.update_progress,
-                device_callback=self.add_device_found
+                device_callback=None  # Don't update UI for each device
             )
             
             devices = self.scanner.scan()
@@ -1253,7 +1324,12 @@ class NetworkMonitorApp:
         self.scanning = False
         self.scan_btn.configure(text="Network Scan", fg_color="#1f538d")
         self.progress_bar.set(1.0)
-        self.info_label.configure(text="Scan complete")
+        
+        # Sort devices by IP address for consistent display
+        devices.sort(key=lambda d: tuple(map(int, d['ip'].split('.'))))
+        
+        # Batch add all devices at once for better performance
+        self.batch_add_devices(devices)
         
         # Update summary
         problematic = sum(1 for d in devices if d.get('response_time', 0) * 1000 > 500)
@@ -1293,12 +1369,28 @@ class NetworkMonitorApp:
         problematic = sum(1 for d in self.all_devices if d.get('response_time', 0) * 1000 > 500)
         self.summary_label.configure(text=f"Devices found: {len(self.all_devices)} | Problematic (>500ms): {problematic}")
     
-    def add_device_to_table(self, device):
+    def batch_add_devices(self, devices):
+        """Batch add multiple devices to table for better performance"""
+        # Freeze UI updates
+        self.table_frame.configure(label_text="Discovered Devices - Loading...")
+        
+        # Add all devices
+        for device in devices:
+            self.add_device_to_table(device, batch_mode=True)
+        
+        # Restore label and force single UI update
+        self.table_frame.configure(label_text="Discovered Devices")
+        self.table_frame.update_idletasks()
+        
+        # Load notes for all devices in background
+        self.load_notes_for_devices_background(devices)
+    
+    def add_device_to_table(self, device, batch_mode=False):
         """Add device to table"""
         if not device:
             return
             
-        row_num = len(self.device_rows) + 1
+        row_num = len(self.device_rows) + 2  # +2 because row 0 is controls, row 1 is headers
         row_widgets = []
         
         # Select checkbox - left-aligned
@@ -1353,65 +1445,90 @@ class NetworkMonitorApp:
         response_label.grid(row=row_num, column=7, padx=5, pady=2)
         row_widgets.append(response_label)
         
-        # Web Service (clickable)
+        # Web Service (clickable label)
         web_service = device.get('web_service')
         if web_service:
-            web_btn = ctk.CTkButton(
+            web_label = ctk.CTkLabel(
                 self.table_frame,
                 text="Open",
-                width=60,
-                height=24,
-                command=lambda: webbrowser.open(web_service)
+                text_color="#1f538d",  # Blue color to indicate clickability
+                cursor="hand2"
             )
-            web_btn.grid(row=row_num, column=8, padx=5, pady=2)
-            row_widgets.append(web_btn)
+            web_label.grid(row=row_num, column=8, padx=5, pady=2)
+            
+            # Add click event and hover effects
+            web_label.bind("<Button-1>", lambda e: webbrowser.open(web_service))
+            web_label.bind("<Enter>", lambda e: web_label.configure(text_color="#0d47a1"))  # Darker blue on hover
+            web_label.bind("<Leave>", lambda e: web_label.configure(text_color="#1f538d"))  # Original blue
+            
+            row_widgets.append(web_label)
         else:
             web_label = ctk.CTkLabel(self.table_frame, text="None")
             web_label.grid(row=row_num, column=8, padx=5, pady=2)
             row_widgets.append(web_label)
         
-        # Actions buttons (replacing dropdown)
+        # Actions clickable labels
         actions_frame = ctk.CTkFrame(self.table_frame)
         actions_frame.grid(row=row_num, column=9, padx=5, pady=2)
 
-        # Details button
-        details_btn = ctk.CTkButton(
+        # Details clickable label
+        details_label = ctk.CTkLabel(
             actions_frame,
             text="Details",
-            width=60,
-            height=20,
-            command=lambda dev=device: self.show_device_details(dev)
+            text_color="#1f538d",  # Blue color to indicate clickability
+            cursor="hand2"
         )
-        details_btn.grid(row=0, column=0, padx=2, pady=1)
+        details_label.grid(row=0, column=0, padx=2, pady=1)
+        
+        # Add click event and hover effects for Details
+        details_label.bind("<Button-1>", lambda e, dev=device: self.show_device_details(dev))
+        details_label.bind("<Enter>", lambda e: details_label.configure(text_color="#0d47a1"))  # Darker blue on hover
+        details_label.bind("<Leave>", lambda e: details_label.configure(text_color="#1f538d"))  # Original blue
 
-        # Nmap Scan button
-        nmap_btn = ctk.CTkButton(
+        # Nmap clickable label
+        nmap_label = ctk.CTkLabel(
             actions_frame,
             text="Nmap",
-            width=50,
-            height=20,
-            command=lambda dev=device: self.show_nmap_dialog(dev.get('ip'))
+            text_color="#1f538d",  # Blue color to indicate clickability
+            cursor="hand2"
         )
-        nmap_btn.grid(row=0, column=1, padx=2, pady=1)
+        nmap_label.grid(row=0, column=1, padx=2, pady=1)
+        
+        # Add click event and hover effects for Nmap
+        nmap_label.bind("<Button-1>", lambda e, dev=device: self.show_nmap_dialog(dev.get('ip')))
+        nmap_label.bind("<Enter>", lambda e: nmap_label.configure(text_color="#0d47a1"))  # Darker blue on hover
+        nmap_label.bind("<Leave>", lambda e: nmap_label.configure(text_color="#1f538d"))  # Original blue
 
         row_widgets.append(actions_frame)
 
-        # Notes button (new column)
+        # Notes clickable label (new column)
         notes_text = device.get('notes', '').strip()
         has_notes = bool(notes_text)
         
-        notes_btn = ctk.CTkButton(
+        notes_label = ctk.CTkLabel(
             self.table_frame,
             text="View Notes" if has_notes else "Add Notes",
-            width=80,
-            height=24,
-            fg_color="#4CAF50" if has_notes else None,  # Green if has notes
-            command=lambda dev=device: self.show_notes_dialog(dev)
+            text_color="#4CAF50" if has_notes else "#1f538d",  # Green if has notes, blue otherwise
+            cursor="hand2"
         )
-        notes_btn.grid(row=row_num, column=10, padx=5, pady=2)
-        row_widgets.append(notes_btn)
+        notes_label.grid(row=row_num, column=10, padx=5, pady=2)
+        
+        # Add click event and hover effects for Notes
+        notes_label.bind("<Button-1>", lambda e, dev=device: self.show_notes_dialog(dev))
+        if has_notes:
+            notes_label.bind("<Enter>", lambda e: notes_label.configure(text_color="#2E7D32"))  # Darker green on hover
+            notes_label.bind("<Leave>", lambda e: notes_label.configure(text_color="#4CAF50"))  # Original green
+        else:
+            notes_label.bind("<Enter>", lambda e: notes_label.configure(text_color="#0d47a1"))  # Darker blue on hover
+            notes_label.bind("<Leave>", lambda e: notes_label.configure(text_color="#1f538d"))  # Original blue
+        
+        row_widgets.append(notes_label)
 
         self.device_rows.append(row_widgets)
+        
+        # Only update the UI if not in batch mode
+        if not batch_mode:
+            self.table_frame.update_idletasks()
 
     def toggle_device_selection(self, device, selected):
         """Toggle device selection for monitoring"""
@@ -1421,6 +1538,35 @@ class NetworkMonitorApp:
         else:
             if device in self.selected_devices:
                 self.selected_devices.remove(device)
+    
+    def select_all_devices(self):
+        """Select all devices in the table"""
+        # Clear existing selections
+        self.selected_devices.clear()
+        
+        # Select all devices and update checkboxes
+        for i, device in enumerate(self.all_devices):
+            self.selected_devices.append(device)
+            # Update checkbox widget (first widget in each row)
+            if i < len(self.device_rows):
+                checkbox = self.device_rows[i][0]
+                if hasattr(checkbox, 'select'):
+                    checkbox.select()
+        
+        self.update_status(f"Selected all {len(self.all_devices)} devices")
+    
+    def deselect_all_devices(self):
+        """Deselect all devices in the table"""
+        # Clear selections
+        self.selected_devices.clear()
+        
+        # Update all checkboxes to unchecked
+        for i in range(len(self.device_rows)):
+            checkbox = self.device_rows[i][0]
+            if hasattr(checkbox, 'deselect'):
+                checkbox.deselect()
+        
+        self.update_status("Deselected all devices")
     
     def perform_search(self):
         """Perform device search"""
@@ -1439,14 +1585,38 @@ class NetworkMonitorApp:
             self.update_status("Showing all devices")
             return
 
-        # Re-add filtered devices with exact match
+        # Re-add filtered devices with exact match on IP, MAC, Hostname or Manufacturer
+        matched_count = 0
         for device in self.all_devices:
             if (query == device['ip'].lower() or
                 query == device.get('mac', '').lower() or
-                query == device.get('hostname', '').lower()):
+                query == device.get('hostname', '').lower() or
+                query == device.get('manufacturer', '').lower()):
                 self.add_device_to_table(device)
+                matched_count += 1
 
-        self.update_status(f"Search completed. Found {len(self.device_rows)} devices matching '{query}' (exact match)")
+        self.update_status(f"Search completed. Found {matched_count} devices matching '{query}' (exact match)")
+
+    def clear_search(self):
+        """Clear search input and show all devices"""
+        # Clear the search input
+        self.search_input.delete(0, tk.END)
+        
+        # Clear current table
+        for row in self.device_rows:
+            for widget in row:
+                widget.destroy()
+        self.device_rows.clear()
+        
+        # Re-add all devices to the table
+        for device in self.all_devices:
+            self.add_device_to_table(device)
+        
+        # Update summary
+        problematic = sum(1 for d in self.all_devices if d.get('response_time', 0) * 1000 > 500)
+        self.summary_label.configure(text=f"Devices found: {len(self.all_devices)} | Problematic (>500ms): {problematic}")
+        
+        self.update_status("Search cleared - showing all devices")
 
     def nmap_scan_selected(self):
         """Handle Nmap scan for selected devices"""
@@ -1483,6 +1653,7 @@ class NetworkMonitorApp:
         nmap_window.title(f"Nmap Options for {ip}")
         nmap_window.geometry("800x600")
         nmap_window.transient(self.root)
+        set_dialog_icon(nmap_window)
         
         # Info label
         info_label = ctk.CTkLabel(
@@ -1652,6 +1823,7 @@ Nmap is not installed on your system. To use network scanning features, please i
         details_window.title(f"Device Details - {device['ip']}")
         details_window.geometry("400x300")
         details_window.transient(self.root)
+        set_dialog_icon(details_window)
         
         details_text = f"""
 Device Information:
@@ -1680,6 +1852,7 @@ Status: {device.get('status', 'Unknown')}
         notes_window.title(f"Device Notes - {device['ip']}")
         notes_window.geometry("500x400")
         notes_window.transient(self.root)
+        set_dialog_icon(notes_window)
         notes_window.grab_set()  # Make modal
         
         # Center the window
@@ -1694,13 +1867,12 @@ Status: {device.get('status', 'Unknown')}
         
         # Display device info
         device_info = f"IP: {device['ip']} | MAC: {device.get('mac', 'Unknown')} | Hostname: {device.get('hostname', 'Unknown')}"
-        info_label = ctk.CTkLabel(
+        ctk.CTkLabel(
             info_frame,
             text=device_info,
-            font=ctk.CTkFont(size=12)
-        )
-        info_label.pack(pady=5)
-        
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(pady=10)
+
         # Notes text area
         notes_label = ctk.CTkLabel(
             notes_window,
@@ -1716,13 +1888,14 @@ Status: {device.get('status', 'Unknown')}
         )
         notes_textbox.pack(fill="both", expand=True, padx=20, pady=(0, 10))
         
-        # Load existing notes
-        notes_textbox.insert("1.0", device.get('notes', ''))
+        # Load existing notes from dedicated notes table
+        existing_notes = self.load_device_notes(device.get('mac', ''))
+        notes_textbox.insert("1.0", existing_notes)
         
         # Button frame
         button_frame = ctk.CTkFrame(notes_window)
-        button_frame.pack(fill="x", padx=20, pady=(10, 20))
-        
+        button_frame.pack(fill="x", padx=20, pady=(0, 20))
+
         def save_notes():
             """Save notes to database and update device"""
             new_notes = notes_textbox.get("1.0", "end-1c").strip()
@@ -1730,41 +1903,45 @@ Status: {device.get('status', 'Unknown')}
             # Update device object
             device['notes'] = new_notes
             
-            # If device has a profile, update in database
-            if device.get('profile'):
+            # Save notes to dedicated notes table (MAC-based, not profile-based)
+            mac_address = device.get('mac', '')
+            if mac_address and mac_address.upper() != 'UNKNOWN':
                 try:
-                    conn = sqlite3.connect('network.db')
-                    cursor = conn.cursor()
-                    
-                    # Update notes in database
-                    cursor.execute("""
-                        UPDATE Profile 
-                        SET Notes = ?
-                        WHERE Profile = ? AND MACAddress = ?
-                    """, (new_notes, device['profile'], device.get('mac', '')))
-                    
-                    conn.commit()
-                    conn.close()
-                    
-                    messagebox.showinfo("Success", "Notes saved successfully!")
+                    success = self.save_device_notes(mac_address, new_notes)
+                    if success:
+                        messagebox.showinfo("Success", "Notes saved successfully!")
+                        # Also update in Profile table if device has a profile
+                        if device.get('profile'):
+                            self.update_profile_notes(device.get('profile'), mac_address, new_notes)
+                    else:
+                        messagebox.showerror("Error", "Failed to save notes to database.")
+                        return  # Don't close dialog if there was an error
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to save notes: {str(e)}")
+                    return  # Don't close dialog if there was an error
             else:
-                # Device not in profile, just update in memory
-                messagebox.showinfo("Note", "Notes saved for this session. Save device to profile to persist notes.")
+                # No valid MAC address, just update in memory
+                messagebox.showinfo("Note", "Notes saved for this session only (no MAC address).")
+            
+            # Update all devices in memory with the same MAC address
+            self.update_all_device_notes(mac_address, new_notes)
             
             # Refresh the device table to update the notes button
             self.refresh_device_table()
-            notes_window.destroy()
+            notes_window.destroy()  # Close dialog after successful save
         
         def clear_notes():
             """Clear the notes text area"""
             notes_textbox.delete("1.0", "end")
             notes_textbox.focus()
         
-        # Buttons
+        # Create a centered container frame for buttons
+        button_container = ctk.CTkFrame(button_frame)
+        button_container.pack(expand=True)  # Center the container
+        
+        # Buttons - now centered
         save_btn = ctk.CTkButton(
-            button_frame,
+            button_container,
             text="Save",
             command=save_notes,
             width=100
@@ -1772,7 +1949,7 @@ Status: {device.get('status', 'Unknown')}
         save_btn.pack(side="left", padx=5)
         
         clear_btn = ctk.CTkButton(
-            button_frame,
+            button_container,
             text="Clear",
             command=clear_notes,
             width=100
@@ -1780,7 +1957,7 @@ Status: {device.get('status', 'Unknown')}
         clear_btn.pack(side="left", padx=5)
         
         cancel_btn = ctk.CTkButton(
-            button_frame,
+            button_container,
             text="Cancel",
             command=notes_window.destroy,
             width=100
@@ -1790,580 +1967,980 @@ Status: {device.get('status', 'Unknown')}
         # Focus on text area
         notes_textbox.focus()
     
-    def open_live_monitor(self):
-        """Open live monitoring dialog using the refactored LiveMonitor class"""
-        if not LIVE_MONITOR_AVAILABLE:
-            messagebox.showerror("Live Monitor", "Live monitor module is not available.")
-            return
-
+    def open_ssh_dialog(self):
+        """Open SSH connection dialog for selected devices"""
         if not self.selected_devices:
-            messagebox.showwarning("No Devices", "Please select at least one device to monitor.")
+            messagebox.showwarning("No Devices Selected", "Please select at least one device to SSH into.")
             return
-        
-        # Initialize live monitor if not already done
-        if not hasattr(self, 'live_monitor'):
-            self.live_monitor = LiveMonitor(self)
 
-        # Open the live monitor with selected devices
-        self.live_monitor.open_live_monitor(self.selected_devices)
+        # If multiple devices selected, let user choose one
+        if len(self.selected_devices) > 1:
+            # Create device selection dialog
+            selection_window = ctk.CTkToplevel(self.root)
+            selection_window.title("Select Device for SSH")
+            selection_window.geometry("400x300")
+            selection_window.transient(self.root)
+            set_dialog_icon(selection_window)
+            selection_window.grab_set()
 
-    def show_file_menu(self):
-        """Show file menu dropdown"""
-        # Create dropdown menu
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Open", command=self.open_file)
-        menu.add_command(label="Save Report", command=self.save_report)
-        menu.add_separator()
-        menu.add_command(label="Exit", command=self.root.quit)
+            # Center the window
+            selection_window.update_idletasks()
+            x = (selection_window.winfo_screenwidth() // 2) - (selection_window.winfo_width() // 2)
+            y = (selection_window.winfo_screenheight() // 2) - (selection_window.winfo_height() // 2)
+            selection_window.geometry(f"+{x}+{y}")
 
-        # Position menu below button
-        x = self.file_menu_btn.winfo_rootx()
-        y = self.file_menu_btn.winfo_rooty() + self.file_menu_btn.winfo_height()
-        menu.post(x, y)
+            ctk.CTkLabel(
+                selection_window,
+                text="Multiple devices selected. Choose one for SSH:",
+                font=ctk.CTkFont(size=14, weight="bold")
+            ).pack(pady=20)
 
-    def show_options_menu(self):
-        """Show options menu dropdown"""
-        # Create dropdown menu
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Toggle Theme", command=self.toggle_theme_via_switch)
+            # Device list frame
+            list_frame = ctk.CTkScrollableFrame(selection_window)
+            list_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
-        # Add settings option if available
-        if SETTINGS_AVAILABLE:
-            menu.add_separator()
-            menu.add_command(label="Settings...", command=lambda: show_settings_dialog(self.root))
+            selected_device = None
 
-        # Position menu below button
-        x = self.options_menu_btn.winfo_rootx()
-        y = self.options_menu_btn.winfo_rooty() + self.options_menu_btn.winfo_height()
-        menu.post(x, y)
+            def select_device(device):
+                nonlocal selected_device
+                selected_device = device
+                selection_window.destroy()
+                self.show_ssh_connection_dialog(device)
 
-    def show_about_menu(self):
-        """Show about menu dropdown"""
-        # Create dropdown menu
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="About Network Monitor", command=self.show_about)
+            # Add device buttons
+            for device in self.selected_devices:
+                device_info = f"{device['ip']} - {device.get('hostname', 'Unknown')}"
+                btn = ctk.CTkButton(
+                    list_frame,
+                    text=device_info,
+                    command=lambda d=device: select_device(d)
+                )
+                btn.pack(fill="x", pady=5)
 
-        # Position menu below button
-        x = self.about_menu_btn.winfo_rootx()
-        y = self.about_menu_btn.winfo_rooty() + self.about_menu_btn.winfo_height()
-        menu.post(x, y)
+            # Cancel button
+            cancel_btn = ctk.CTkButton(
+                selection_window,
+                text="Cancel",
+                command=selection_window.destroy
+            )
+            cancel_btn.pack(pady=10)
 
-    def show_about(self):
-        """Show about dialog"""
-        about_window = ctk.CTkToplevel(self.root)
-        about_window.title("About Tech Assistant")
-        about_window.geometry("420x320")
-        about_window.transient(self.root)
+        else:
+            # Single device selected
+            self.show_ssh_connection_dialog(self.selected_devices[0])
 
-        about_text = """
-Tech Assistant v1.0
+    def show_ssh_connection_dialog(self, device):
+        """Show SSH connection dialog for a specific device"""
+        if not SSH_AVAILABLE:
+            self.show_ssh_installation_dialog(device)
+            return
 
-A modern network scanner and live device monitor.
-Features: device discovery, latency/uptime monitoring, 
-speed test, and more.
+        ssh_window = ctk.CTkToplevel(self.root)
+        ssh_window.title(f"SSH Connection - {device['ip']}")
+        ssh_window.geometry("500x400")
+        ssh_window.transient(self.root)
+        ssh_window.grab_set()
 
-Author: Jason Burnham
-Email: jason.o.burnham@gmail.com
-License: MIT
-© 2025 Jason Burnham
+        # Center the window
+        ssh_window.update_idletasks()
+        x = (ssh_window.winfo_screenwidth() // 2) - (ssh_window.winfo_width() // 2)
+        y = (ssh_window.winfo_screenheight() // 2) - (ssh_window.winfo_height() // 2)
+        ssh_window.geometry(f"+{x}+{y}")
 
-Built with CustomTkinter, psutil, scapy, speedtest-cli
-        """
+        # Device info
+        info_frame = ctk.CTkFrame(ssh_window)
+        info_frame.pack(fill="x", padx=20, pady=20)
 
-        about_label = ctk.CTkLabel(
-            about_window,
-            text=about_text,
-            justify="center",
-            font=ctk.CTkFont(size=12)
+        device_info = f"Connecting to: {device['ip']} ({device.get('hostname', 'Unknown')})"
+        ctk.CTkLabel(
+            info_frame,
+            text=device_info,
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(pady=10)
+
+        # Connection form
+        form_frame = ctk.CTkFrame(ssh_window)
+        form_frame.pack(fill="x", padx=20, pady=10)
+
+        # Username
+        ctk.CTkLabel(form_frame, text="Username:").pack(anchor="w", padx=10, pady=(10, 5))
+        username_entry = ctk.CTkEntry(form_frame, placeholder_text="Enter username")
+        username_entry.pack(fill="x", padx=10, pady=(0, 10))
+        username_entry.focus()
+
+        # Password
+        ctk.CTkLabel(form_frame, text="Password:").pack(anchor="w", padx=10, pady=(0, 5))
+        password_entry = ctk.CTkEntry(form_frame, placeholder_text="Enter password", show="*")
+        password_entry.pack(fill="x", padx=10, pady=(0, 10))
+
+        # Port
+        ctk.CTkLabel(form_frame, text="Port:").pack(anchor="w", padx=10, pady=(0, 5))
+        port_entry = ctk.CTkEntry(form_frame, placeholder_text="22")
+        port_entry.insert(0, "22")
+        port_entry.pack(fill="x", padx=10, pady=(0, 10))
+
+        # Status label
+        status_label = ctk.CTkLabel(ssh_window, text="")
+        status_label.pack(pady=10)
+
+        # Button frame
+        button_frame = ctk.CTkFrame(ssh_window)
+        button_frame.pack(fill="x", padx=20, pady=20)
+
+        def connect_ssh():
+            """Attempt SSH connection"""
+            username = username_entry.get().strip()
+            password = password_entry.get().strip()
+            port = port_entry.get().strip() or "22"
+
+            if not username:
+                status_label.configure(text="Please enter a username", text_color="#f44336")
+                return
+
+            if not password:
+                status_label.configure(text="Please enter a password", text_color="#f44336")
+                return
+
+            try:
+                port_num = int(port)
+            except ValueError:
+                status_label.configure(text="Invalid port number", text_color="#f44336")
+                return
+
+            # Disable buttons during connection
+            connect_btn.configure(state="disabled", text="Connecting...")
+            status_label.configure(text="Connecting...", text_color="#2196f3")
+            ssh_window.update()
+
+            # Attempt connection in a thread
+            def ssh_connect_thread():
+                try:
+                    # Create SSH client
+                    ssh_client = paramiko.SSHClient()
+                    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+                    # Connect
+                    ssh_client.connect(
+                        hostname=device['ip'],
+                        port=port_num,
+                        username=username,
+                        password=password,
+                        timeout=10
+                    )
+
+                    # Connection successful
+                    ssh_window.after(0, lambda: connection_successful(ssh_client))
+
+                except paramiko.AuthenticationException:
+                    ssh_window.after(0, lambda: connection_failed("Authentication failed - check username/password"))
+                except paramiko.SSHException as e:
+                    ssh_window.after(0, lambda: connection_failed(f"SSH connection error: {str(e)}"))
+                except socket.timeout:
+                    ssh_window.after(0, lambda: connection_failed("Connection timeout - device may not be reachable"))
+                except Exception as e:
+                    ssh_window.after(0, lambda: connection_failed(f"Connection error: {str(e)}"))
+
+            threading.Thread(target=ssh_connect_thread, daemon=True).start()
+
+        def connection_successful(ssh_client):
+            """Handle successful SSH connection"""
+            status_label.configure(text="Connected successfully!", text_color="#4caf50")
+            connect_btn.configure(state="normal", text="Connect")
+
+            # Close the connection dialog and open SSH terminal
+            ssh_window.destroy()
+            self.open_ssh_terminal(device, ssh_client)
+
+        def connection_failed(error_msg):
+            """Handle failed SSH connection"""
+            status_label.configure(text=error_msg, text_color="#f44336")
+            connect_btn.configure(state="normal", text="Connect")
+
+        # Connect button
+        connect_btn = ctk.CTkButton(
+            button_frame,
+            text="Connect",
+            command=connect_ssh
         )
-        about_label.pack(padx=20, pady=20, expand=True, fill="both")
+        connect_btn.pack(side="left", padx=5)
 
-        ok_btn = ctk.CTkButton(about_window, text="OK", command=about_window.destroy)
-        ok_btn.pack(pady=10)
+        # Cancel button
+        cancel_btn = ctk.CTkButton(
+            button_frame,
+            text="Cancel",
+            command=ssh_window.destroy
+        )
+        cancel_btn.pack(side="left", padx=5)
 
-    def toggle_theme_via_switch(self):
-        # Get current theme and toggle it
-        current_mode = ctk.get_appearance_mode()
-        if current_mode.lower() == "dark":
-            new_theme = "light"
-        else:
-            new_theme = "dark"
+        # Bind Enter key to connect
+        def on_enter(event):
+            connect_ssh()
 
-        # Apply the new theme
-        ctk.set_appearance_mode(new_theme)
+        username_entry.bind("<Return>", on_enter)
+        password_entry.bind("<Return>", on_enter)
+        port_entry.bind("<Return>", on_enter)
 
-        # Save the theme preference to settings
-        if SETTINGS_AVAILABLE:
-            set_theme(new_theme)
+    def open_ssh_terminal(self, device, ssh_client):
+        """Open SSH terminal window"""
+        terminal_window = ctk.CTkToplevel(self.root)
+        terminal_window.title(f"SSH Terminal - {device['ip']}")
+        terminal_window.geometry("800x600")
+        terminal_window.transient(self.root)
 
-        # Update menubar button colors after theme change
-        self.root.after(50, self.update_menubar_colors)
+        # Terminal frame
+        terminal_frame = ctk.CTkFrame(terminal_window)
+        terminal_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-    def update_menubar_colors(self):
-        """Update menubar button text colors to match current theme"""
-        current_mode = ctk.get_appearance_mode()
+        # Output text area
+        output_text = ctk.CTkTextbox(
+            terminal_frame,
+            font=ctk.CTkFont(family="Consolas", size=12),
+            wrap="word"
+        )
+        output_text.pack(fill="both", expand=True, padx=10, pady=(10, 5))
 
-        # Set text colors based on theme
-        if current_mode.lower() == "dark":
-            text_color = "#FFFFFF"  # Explicit white hex
-            hover_color = ("gray80", "gray20")
-        else:
-            text_color = "#000000"  # Explicit black hex
-            hover_color = ("gray80", "gray20")
+        # Command input
+        input_frame = ctk.CTkFrame(terminal_frame)
+        input_frame.pack(fill="x", padx=10, pady=(0, 10))
 
-        # Update all menubar button colors
-        try:
-            self.file_menu_btn.configure(fg_color="transparent", text_color=text_color, hover_color=hover_color)
-            self.options_menu_btn.configure(fg_color="transparent", text_color=text_color, hover_color=hover_color)
-            self.about_menu_btn.configure(fg_color="transparent", text_color=text_color, hover_color=hover_color)
-            print(f"Menubar text colors updated to {text_color} for {current_mode} theme")
-        except Exception as e:
-            print(f"Error updating menubar button colors: {e}")
+        ctk.CTkLabel(input_frame, text="$", font=ctk.CTkFont(family="Consolas", size=12)).pack(side="left", padx=(5, 2))
 
-    def get_network_interfaces(self):
-        """Get available network interfaces with their details"""
-        interfaces = []
-        active_interface = None
+        command_entry = ctk.CTkEntry(
+            input_frame,
+            font=ctk.CTkFont(family="Consolas", size=12),
+            placeholder_text="Enter command..."
+        )
+        command_entry.pack(fill="x", side="left", padx=(0, 5))
+        command_entry.focus()
 
-        try:
-            import psutil
-            net_interfaces = psutil.net_if_addrs()
-            net_stats = psutil.net_if_stats()
+        send_btn = ctk.CTkButton(
+            input_frame,
+            text="Send",
+            width=60
+        )
+        send_btn.pack(side="right", padx=5)
 
-            # Get the current active interface (the one we're using for internet)
+        # Add welcome message
+        output_text.insert("end", f"Connected to {device['ip']}\n")
+        output_text.insert("end", f"Hostname: {device.get('hostname', 'Unknown')}\n")
+        output_text.insert("end", "Type 'exit' to close connection.\n\n")
+
+        def execute_command():
+            """Execute SSH command"""
+            command = command_entry.get().strip()
+            if not command:
+                return
+
+            # Add command to output
+            output_text.insert("end", f"$ {command}\n")
+            command_entry.delete(0, "end")
+
+            if command.lower() in ['exit', 'quit', 'logout']:
+                # Close connection
+                ssh_client.close()
+                output_text.insert("end", "Connection closed.\n")
+                terminal_window.after(2000, terminal_window.destroy)
+                return
+
+            # Execute command in thread
+            def command_thread():
+                try:
+                    stdin, stdout, stderr = ssh_client.exec_command(command, timeout=30)
+
+                    # Read output
+                    output = stdout.read().decode('utf-8', errors='replace')
+                    error = stderr.read().decode('utf-8', errors='replace')
+
+                    # Update UI in main thread
+                    terminal_window.after(0, lambda: display_output(output, error))
+
+                except Exception as e:
+                    terminal_window.after(0, lambda: display_output("", f"Command error: {str(e)}"))
+
+            threading.Thread(target=command_thread, daemon=True).start()
+
+        def display_output(stdout_text, stderr_text):
+            """Display command output"""
+            if stdout_text:
+                output_text.insert("end", stdout_text)
+            if stderr_text:
+                output_text.insert("end", f"Error: {stderr_text}")
+            output_text.insert("end", "\n")
+            output_text.see("end")
+
+        # Bind Enter key and button
+        command_entry.bind("<Return>", lambda event: execute_command())
+        send_btn.configure(command=execute_command)
+
+        # Handle window close
+        def on_close():
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                    s.connect(("8.8.8.8", 80))
-                    active_ip = s.getsockname()[0]
-            except:
-                active_ip = None
-
-            for interface_name, addresses in net_interfaces.items():
-                # Skip loopback interfaces
-                if 'loopback' in interface_name.lower() or interface_name.lower() == 'lo':
-                    continue
-
-                # Get interface statistics
-                stats = net_stats.get(interface_name)
-                if not stats or not stats.isup:
-                    continue
-
-                # Find IPv4 address
-                ipv4_addr = None
-                for addr in addresses:
-                    if addr.family == socket.AF_INET:  # IPv4
-                        ipv4_addr = addr.address
-                        break
-
-                if ipv4_addr and not ipv4_addr.startswith('127.') and not ipv4_addr.startswith('169.254.'):
-                    # Create network range for this interface
-                    ip_parts = ipv4_addr.split('.')
-                    network_range = f"{'.'.join(ip_parts[:3])}.0/24"
-
-                    interface_info = {
-                        'name': interface_name,
-                        'ip': ipv4_addr,
-                        'network': network_range,
-                        'display': f"{interface_name} ({ipv4_addr} - {network_range})"
-                    }
-
-                    interfaces.append(interface_info)
-
-                    # Check if this is the active interface
-                    if active_ip and ipv4_addr == active_ip:
-                        active_interface = interface_info
-
-            # If no active interface found, use the first one
-            if not active_interface and interfaces:
-                active_interface = interfaces[0]
-
-        except Exception as e:
-            print(f"Error detecting network interfaces: {e}")
-            # Fallback to basic detection
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                    s.connect(("8.8.8.8", 80))
-                    local_ip = s.getsockname()[0]
-                    ip_parts = local_ip.split('.')
-                    network_range = f"{'.'.join(ip_parts[:3])}.0/24"
-
-                    fallback_interface = {
-                        'name': 'Auto-detected',
-                        'ip': local_ip,
-                        'network': network_range,
-                        'display': f"Auto-detected ({local_ip} - {network_range})"
-                    }
-                    interfaces = [fallback_interface]
-                    active_interface = fallback_interface
+                ssh_client.close()
             except:
                 pass
+            terminal_window.destroy()
 
-        return interfaces, active_interface
+        terminal_window.protocol("WM_DELETE_WINDOW", on_close)
 
-    def on_interface_selected(self, selection):
-        """Handle interface selection from dropdown"""
-        if selection == "Auto-Detect":
-            self.auto_detect_network()
-            return
+    def show_ssh_installation_dialog(self, device):
+        """Show SSH installation instructions when paramiko is not available"""
+        install_window = ctk.CTkToplevel(self.root)
+        install_window.title("SSH Support Required")
+        install_window.geometry("600x500")
+        install_window.transient(self.root)
+        install_window.grab_set()
 
-        # Find the selected interface
-        for interface in self.available_interfaces:
-            if interface['display'] == selection:
-                # Update the IP input with the network range
-                self.ip_input.delete(0, tk.END)
-                self.ip_input.insert(0, interface['network'])
-                self.update_status(f"Selected interface: {interface['name']} - {interface['network']}")
-                self.info_label.configure(text=f"Ready to scan network: {interface['network']}")
-                break
+        # Center the window
+        install_window.update_idletasks()
+        x = (install_window.winfo_screenwidth() // 2) - (install_window.winfo_width() // 2)
+        y = (install_window.winfo_screenheight() // 2) - (install_window.winfo_height() // 2)
+        install_window.geometry(f"+{x}+{y}")
 
-    def update_network_information(self):
-        """Update the network information display in the sidebar"""
-        try:
-            # Get active network interface info
-            local_ip = None
-            subnet_mask = None
-            gateway = None
-            mac_address = None
-            internet_connected = False
+        # Instructions text
+        instructions = """SSH SUPPORT NOT AVAILABLE
 
-            # Try to get local IP and check internet connection
+To use SSH functionality, you need to install the 'paramiko' library.
+
+INSTALLATION INSTRUCTIONS:
+
+1. Open Command Prompt (Windows) or Terminal (Mac/Linux)
+
+2. Install paramiko using pip:
+   pip install paramiko
+
+3. Alternative installation methods:
+   • Using conda: conda install paramiko
+   • Using pip3: pip3 install paramiko
+
+4. Restart the application after installation
+
+ALTERNATIVE SSH OPTIONS:
+
+• Use built-in SSH client:
+  - Windows: ssh username@{ip}
+  - Mac/Linux: ssh username@{ip}
+
+• Use dedicated SSH clients:
+  - PuTTY (Windows)
+  - Terminal (Mac/Linux)
+  - MobaXterm (Windows)
+
+After installing paramiko, you'll be able to SSH directly from this application.""".format(ip=device['ip'])
+
+        text_widget = ctk.CTkTextbox(
+            install_window,
+            font=ctk.CTkFont(family="Consolas", size=11)
+        )
+        text_widget.pack(fill="both", expand=True, padx=20, pady=20)
+        text_widget.insert("1.0", instructions)
+        text_widget.configure(state="disabled")
+
+        # Buttons
+        button_frame = ctk.CTkFrame(install_window)
+        button_frame.pack(fill="x", padx=20, pady=(0, 20))
+
+        def open_external_ssh():
+            """Try to open external SSH client"""
+            ip = device['ip']
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                    s.connect(("8.8.8.8", 80))
-                    local_ip = s.getsockname()[0]
-                    internet_connected = True
-            except:
-                internet_connected = False
+                if platform.system().lower() == 'windows':
+                    # Try to use Windows SSH client
+                    subprocess.Popen(['cmd', '/c', 'start', 'cmd', '/k', f'ssh root@{ip}'],
+                                   creationflags=subprocess.CREATE_NO_WINDOW)
+                else:
+                    # Mac/Linux
+                    subprocess.Popen(['ssh', f'root@{ip}'])
 
-            # Get network interface details using psutil
-            if local_ip:
-                import psutil
+                install_window.destroy()
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not launch external SSH client: {e}")
 
-                # Get subnet mask and MAC for the interface with our IP
-                for interface_name, addresses in psutil.net_if_addrs().items():
-                    for addr in addresses:
-                        if addr.family == socket.AF_INET and addr.address == local_ip:
-                            subnet_mask = addr.netmask
-                        elif addr.family == psutil.AF_LINK and hasattr(addr, 'address'):
-                            # Store MAC address for this interface
-                            if 'loopback' not in interface_name.lower():
-                                mac_address = addr.address
+        external_btn = ctk.CTkButton(
+            button_frame,
+            text=f"Open External SSH to {device['ip']}",
+            command=open_external_ssh
+        )
+        external_btn.pack(side="left", padx=5)
 
-                # Get default gateway
-                try:
-                    gateways = psutil.net_if_stats()
-                    # On Windows, use route command to get gateway
-                    if platform.system().lower() == 'windows':
-                        result = subprocess.run(['route', 'print', '0.0.0.0'],
-                                              capture_output=True, text=True,
-                                              creationflags=subprocess.CREATE_NO_WINDOW)
-                        if result.returncode == 0:
-                            lines = result.stdout.split('\n')
-                            for line in lines:
-                                if '0.0.0.0' in line and local_ip in line:
-                                    parts = line.split()
-                                    if len(parts) >= 3:
-                                        gateway = parts[2]
-                                        break
-                    else:
-                        # Linux/Mac
-                        result = subprocess.run(['ip', 'route'], capture_output=True, text=True)
-                        if result.returncode == 0:
-                            lines = result.stdout.split('\n')
-                            for line in lines:
-                                if 'default' in line:
-                                    parts = line.split()
-                                    if 'via' in parts:
-                                        idx = parts.index('via')
-                                        if idx + 1 < len(parts):
-                                            gateway = parts[idx + 1]
-                                            break
-                except:
-                    pass
+        close_btn = ctk.CTkButton(
+            button_frame,
+            text="Close",
+            command=install_window.destroy
+        )
+        close_btn.pack(side="right", padx=5)
 
-            # Update labels
-            if local_ip:
-                self.local_ip_label.configure(text=f"Local IP: {local_ip}")
+    def open_live_monitor(self):
+        """Open live monitoring window for selected devices"""
+        if not self.selected_devices:
+            messagebox.showwarning("No Devices Selected", "Please select at least one device to monitor.")
+            return
+        
+        if LIVE_MONITOR_AVAILABLE:
+            # Use external live monitor module
+            try:
+                from live_monitor import LiveMonitor
+                live_monitor = LiveMonitor(self)
+                live_monitor.open_live_monitor(self.selected_devices)
+            except Exception as e:
+                messagebox.showerror("Live Monitor Error", f"Failed to open live monitor: {e}")
+                print(f"Live monitor error: {e}")  # Debug output
+                # Fall back to built-in monitor
+                self.show_builtin_live_monitor()
+        else:
+            # Use built-in live monitor
+            self.show_builtin_live_monitor()
+    
+    def show_builtin_live_monitor(self):
+        """Show built-in live monitoring window"""
+        if self.current_monitor_window:
+            self.current_monitor_window.lift()
+            return
+        
+        # Create monitor window
+        self.current_monitor_window = ctk.CTkToplevel(self.root)
+        self.current_monitor_window.title("Live Device Monitor")
+        self.current_monitor_window.geometry("1000x700")
+        self.current_monitor_window.transient(self.root)
+        
+        # Handle window close
+        self.current_monitor_window.protocol("WM_DELETE_WINDOW", self.close_monitor_window)
+        
+        # Main frame
+        main_frame = ctk.CTkFrame(self.current_monitor_window)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Control frame
+        control_frame = ctk.CTkFrame(main_frame)
+        control_frame.pack(fill="x", pady=(0, 10))
+        
+        # Start/Stop monitoring button
+        self.monitor_btn = ctk.CTkButton(
+            control_frame,
+            text="Start Monitoring",
+            command=self.toggle_monitoring
+        )
+        self.monitor_btn.pack(side="left", padx=5)
+        
+        # Pause/Resume button
+        self.pause_btn = ctk.CTkButton(
+            control_frame,
+            text="Pause",
+            command=self.toggle_pause_monitoring,
+            state="disabled"
+        )
+        self.pause_btn.pack(side="left", padx=5)
+        
+        # Clear data button
+        clear_btn = ctk.CTkButton(
+            control_frame,
+            text="Clear Data",
+            command=self.clear_monitor_data
+        )
+        clear_btn.pack(side="left", padx=5)
+        
+        # Status label
+        self.monitor_status_label = ctk.CTkLabel(
+            control_frame,
+            text=f"Monitoring {len(self.selected_devices)} devices"
+        )
+        self.monitor_status_label.pack(side="right", padx=10)
+        
+        # Create scrollable frame for device monitors
+        self.monitor_scroll_frame = ctk.CTkScrollableFrame(
+            main_frame,
+            label_text="Device Status"
+        )
+        self.monitor_scroll_frame.pack(fill="both", expand=True)
+        
+        # Create individual device monitor widgets
+        self.create_device_monitor_widgets()
+    
+    def create_device_monitor_widgets(self):
+        """Create monitoring widgets for each selected device"""
+        self.device_monitor_widgets = {}
+        
+        for i, device in enumerate(self.selected_devices):
+            # Device frame
+            device_frame = ctk.CTkFrame(self.monitor_scroll_frame)
+            device_frame.grid(row=i//2, column=i%2, padx=10, pady=10, sticky="nsew")
+            
+            # Configure grid
+            self.monitor_scroll_frame.grid_columnconfigure(i%2, weight=1)
+            
+            # Device info
+            info_label = ctk.CTkLabel(
+                device_frame,
+                text=f"{device['ip']} - {device.get('hostname', 'Unknown')}",
+                font=ctk.CTkFont(size=14, weight="bold")
+            )
+            info_label.pack(pady=5)
+            
+            # Status label
+            status_label = ctk.CTkLabel(device_frame, text="Status: Not monitoring")
+            status_label.pack()
+            
+            # Latency label  
+            latency_label = ctk.CTkLabel(device_frame, text="Latency: --")
+            latency_label.pack()
+            
+            # Last update label
+            update_label = ctk.CTkLabel(device_frame, text="Last update: Never")
+            update_label.pack()
+            
+            # Simple graph placeholder (text-based)
+            graph_label = ctk.CTkLabel(
+                device_frame,
+                text="Latency Graph: Start monitoring to see data",
+                width=400,
+                height=100
+            )
+            graph_label.pack(pady=5)
+            
+            # Store widgets
+            self.device_monitor_widgets[device['ip']] = {
+                'frame': device_frame,
+                'status': status_label,
+                'latency': latency_label,
+                'update': update_label,
+                'graph': graph_label
+            }
+    
+    def toggle_monitoring(self):
+        """Toggle device monitoring"""
+        if not self.monitoring:
+            self.start_monitoring()
+        else:
+            self.stop_monitoring()
+    
+    def start_monitoring(self):
+        """Start monitoring selected devices"""
+        self.monitoring = True
+        self.monitor_paused = False
+        
+        # Update UI
+        self.monitor_btn.configure(text="Stop Monitoring", fg_color="#d32f2f")
+        self.pause_btn.configure(state="normal")
+        
+        # Start monitors for each device
+        for device in self.selected_devices:
+            if device['ip'] not in self.device_monitors:
+                monitor = DeviceMonitor(device['ip'], interval=2)
+                monitor.start(
+                    update_callback=self.update_device_monitor,
+                    graph_callback=self.update_device_graph
+                )
+                self.device_monitors[device['ip']] = monitor
+        
+        self.update_status(f"Started monitoring {len(self.selected_devices)} devices")
+    
+    def stop_monitoring(self):
+        """Stop monitoring all devices"""
+        self.monitoring = False
+        self.monitor_paused = False
+        
+        # Update UI
+        self.monitor_btn.configure(text="Start Monitoring", fg_color="#1f538d")
+        self.pause_btn.configure(state="disabled", text="Pause")
+        
+        # Stop all monitors
+        for monitor in self.device_monitors.values():
+            monitor.stop()
+        self.device_monitors.clear()
+        
+        # Reset widget states
+        for ip, widgets in self.device_monitor_widgets.items():
+            widgets['status'].configure(text="Status: Not monitoring")
+            widgets['latency'].configure(text="Latency: --")
+            widgets['update'].configure(text="Last update: Never")
+        
+        self.update_status("Stopped monitoring all devices")
+    
+    def toggle_pause_monitoring(self):
+        """Toggle pause/resume monitoring"""
+        if not self.monitor_paused:
+            self.monitor_paused = True
+            self.pause_btn.configure(text="Resume")
+            self.update_status("Monitoring paused")
+        else:
+            self.monitor_paused = False
+            self.pause_btn.configure(text="Pause")
+            self.update_status("Monitoring resumed")
+    
+    def clear_monitor_data(self):
+        """Clear monitoring data"""
+        for monitor in self.device_monitors.values():
+            monitor.buffer.clear()
+        
+        # Reset graphs
+        for widgets in self.device_monitor_widgets.values():
+            widgets['graph'].configure(text="Latency Graph: Data cleared")
+        
+        self.update_status("Monitoring data cleared")
+    
+    def update_device_monitor(self, ip, latency, status, timestamp):
+        """Update device monitor display"""
+        if self.monitor_paused:
+            return
+        
+        if ip in self.device_monitor_widgets:
+            widgets = self.device_monitor_widgets[ip]
+            
+            # Update status
+            status_text = "Online" if status == 'up' else "Offline"
+            status_color = "#4CAF50" if status == 'up' else "#f44336"
+            widgets['status'].configure(
+                text=f"Status: {status_text}",
+                text_color=status_color
+            )
+            
+            # Update latency
+            if status == 'up' and not math.isnan(latency):
+                latency_color = "#4CAF50" if latency < 100 else "#FF9800" if latency < 500 else "#f44336"
+                widgets['latency'].configure(
+                    text=f"Latency: {latency:.1f}ms",
+                    text_color=latency_color
+                )
             else:
-                self.local_ip_label.configure(text="Local IP: Not connected")
-
-            if subnet_mask:
-                self.subnet_label.configure(text=f"Subnet: {subnet_mask}")
-            else:
-                self.subnet_label.configure(text="Subnet: Unknown")
-
-            if gateway:
-                self.gateway_label.configure(text=f"Gateway: {gateway}")
-            else:
-                self.gateway_label.configure(text="Gateway: Unknown")
-
-            if mac_address:
-                self.mac_label.configure(text=f"MAC: {mac_address}")
-            else:
-                self.mac_label.configure(text="MAC: Unknown")
-
-            # Internet status with color
-            if internet_connected:
-                self.internet_status_label.configure(text="Internet: Connected", text_color="#4CAF50")
-            else:
-                self.internet_status_label.configure(text="Internet: Disconnected", text_color="#F44336")
-
-        except Exception as e:
-            print(f"Error updating network information: {e}")
-            self.local_ip_label.configure(text="Local IP: Error")
-            self.subnet_label.configure(text="Subnet: Error")
-            self.gateway_label.configure(text="Gateway: Error")
-            self.mac_label.configure(text="MAC: Error")
-            self.internet_status_label.configure(text="Internet: Error", text_color="#F44336")
-
-    def get_external_ip(self):
-        """Get external IP address in a separate thread"""
-        try:
-            # Try multiple services for redundancy
-            services = [
-                'https://api.ipify.org',
-                'https://checkip.amazonaws.com',
-                'https://ifconfig.me/ip'
-            ]
-
-            import urllib.request
-            for service in services:
-                try:
-                    with urllib.request.urlopen(service, timeout=5) as response:
-                        external_ip = response.read().decode('utf-8').strip()
-                        # Update label on main thread
-                        self.root.after(0, lambda: self.external_ip_label.configure(
-                            text=f"External IP: {external_ip}"))
-                        return
-                except:
-                    continue
-
-            # If all services fail
-            self.root.after(0, lambda: self.external_ip_label.configure(
-                text="External IP: Unable to detect"))
-
-        except Exception as e:
-            print(f"Error getting external IP: {e}")
-            self.root.after(0, lambda: self.external_ip_label.configure(
-                text="External IP: Error"))
-
+                widgets['latency'].configure(
+                    text="Latency: Timeout",
+                    text_color="#f44336"
+                )
+            
+            # Update timestamp
+            time_str = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
+            widgets['update'].configure(text=f"Last update: {time_str}")
+    
+    def update_device_graph(self, ip, data_buffer):
+        """Update device graph (simplified text version)"""
+        if self.monitor_paused or ip not in self.device_monitor_widgets:
+            return
+        
+        widgets = self.device_monitor_widgets[ip]
+        
+        if len(data_buffer) < 2:
+            widgets['graph'].configure(text="Latency Graph: Collecting data...")
+            return
+        
+        # Simple text-based graph representation
+        recent_data = data_buffer[-10:]  # Last 10 readings
+        latencies = [d[1] for d in recent_data if not math.isnan(d[1])]
+        
+        if latencies:
+            avg_latency = sum(latencies) / len(latencies)
+            min_latency = min(latencies)
+            max_latency = max(latencies)
+            
+            graph_text = f"Latency (last 10): Avg {avg_latency:.1f}ms | Min {min_latency:.1f}ms | Max {max_latency:.1f}ms"
+        else:
+            graph_text = "Latency Graph: No valid data"
+        
+        widgets['graph'].configure(text=graph_text)
+    
+    def close_monitor_window(self):
+        """Close monitoring window"""
+        if self.monitoring:
+            self.stop_monitoring()
+        
+        if self.current_monitor_window:
+            self.current_monitor_window.destroy()
+            self.current_monitor_window = None
+    
     def run_speed_test(self):
         """Run internet speed test"""
         if not SPEEDTEST_AVAILABLE:
-            messagebox.showerror("Speed Test", "speedtest-cli not available")
+            self.show_speedtest_installation_dialog()
             return
-
+        
         # Create speed test window
-        speed_window = ctk.CTkToplevel(self.root)
-        speed_window.title("Internet Speed Test")
-        speed_window.geometry("450x350")
-        speed_window.transient(self.root)
-        speed_window.grab_set()  # Make modal
-
+        speedtest_window = ctk.CTkToplevel(self.root)
+        speedtest_window.title("Internet Speed Test")
+        speedtest_window.geometry("500x400")
+        speedtest_window.transient(self.root)
+        speedtest_window.grab_set()
+        
+        # Center the window
+        speedtest_window.update_idletasks()
+        x = (speedtest_window.winfo_screenwidth() // 2) - (speedtest_window.winfo_width() // 2)
+        y = (speedtest_window.winfo_screenheight() // 2) - (speedtest_window.winfo_height() // 2)
+        speedtest_window.geometry(f"+{x}+{y}")
+        
+        # Main frame
+        main_frame = ctk.CTkFrame(speedtest_window)
+        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        # Title
+        title_label = ctk.CTkLabel(
+            main_frame,
+            text="Internet Speed Test",
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        title_label.pack(pady=(0, 20))
+        
         # Status label
-        status_label = ctk.CTkLabel(
-            speed_window,
-            text="Initializing speed test...",
-            font=ctk.CTkFont(size=16, weight="bold")
-        )
-        status_label.pack(pady=20, padx=20, fill="x")
-
+        status_label = ctk.CTkLabel(main_frame, text="Ready to start speed test")
+        status_label.pack(pady=5)
+        
         # Progress bar
-        progress_bar = ctk.CTkProgressBar(speed_window)
-        progress_bar.pack(pady=10, padx=20, fill="x")
+        progress_bar = ctk.CTkProgressBar(main_frame)
+        progress_bar.pack(fill="x", pady=10)
         progress_bar.set(0)
-
-        # Results label
-        results_label = ctk.CTkLabel(speed_window, text="", justify=ctk.LEFT)
-        results_label.pack(pady=10, padx=20, fill="x")
-
-        # --- Button Frame ---
-        button_frame = ctk.CTkFrame(speed_window)
-        button_frame.pack(pady=20, padx=20, fill="x")
-
-        # Center buttons using a nested frame
-        center_frame = ctk.CTkFrame(button_frame)
-        center_frame.pack(expand=True)
-
-        action_button = ctk.CTkButton(center_frame, text="Cancel")
-        action_button.pack(side="left", padx=10)
-
-        close_button = ctk.CTkButton(center_frame, text="Close", command=speed_window.destroy)
-        close_button.pack(side="left", padx=10)
-        close_button.configure(state="disabled")
-
-        # --- Speed Test Logic ---
-        speed_test_runner = None
-        test_thread = None
-        test_completed = False
-
+        
+        # Results frame
+        results_frame = ctk.CTkFrame(main_frame)
+        results_frame.pack(fill="both", expand=True, pady=10)
+        
+        # Results labels
+        download_label = ctk.CTkLabel(results_frame, text="Download Speed: --", font=ctk.CTkFont(size=14))
+        download_label.pack(pady=5)
+        
+        upload_label = ctk.CTkLabel(results_frame, text="Upload Speed: --", font=ctk.CTkFont(size=14))
+        upload_label.pack(pady=5)
+        
+        ping_label = ctk.CTkLabel(results_frame, text="Ping: --", font=ctk.CTkFont(size=14))
+        ping_label.pack(pady=5)
+        
+        server_label = ctk.CTkLabel(results_frame, text="Server: --", font=ctk.CTkFont(size=12))
+        server_label.pack(pady=5)
+        
+        # Button frame
+        button_frame = ctk.CTkFrame(main_frame)
+        button_frame.pack(fill="x", pady=(10, 0))
+        
+        # Speed test runner
+        speed_runner = None
+        
         def start_test():
-            nonlocal speed_test_runner, test_thread, test_completed
-            test_completed = False
-
+            nonlocal speed_runner
+            
             # Reset UI
-            status_label.configure(text="Initializing speed test...")
+            status_label.configure(text="Initializing...")
             progress_bar.set(0)
-            results_label.configure(text="")
-            action_button.configure(text="Cancel", state="normal")
-            close_button.configure(state="disabled")
-
-            # Create and start a new test runner
-            speed_test_runner = SpeedTestRunner(
-                progress_callback=on_progress,
-                status_callback=on_status,
-                result_callback=on_result,
-                error_callback=on_error
+            download_label.configure(text="Download Speed: --")
+            upload_label.configure(text="Upload Speed: --")
+            ping_label.configure(text="Ping: --")
+            server_label.configure(text="Server: --")
+            
+            start_btn.configure(state="disabled")
+            cancel_btn.configure(state="normal")
+            
+            # Create and start speed test
+            speed_runner = SpeedTestRunner(
+                progress_callback=lambda p: progress_bar.set(p/100),
+                status_callback=lambda s: status_label.configure(text=s),
+                result_callback=show_results,
+                error_callback=show_error
             )
-
-            def cancel_test():
-                speed_test_runner.cancel()
-                action_button.configure(text="Retry", command=start_test)
-                close_button.configure(state="normal")
-                status_label.configure(text="Speed test cancelled")
-                progress_bar.set(0)
-
-            action_button.configure(command=cancel_test)
-
-            test_thread = threading.Thread(target=speed_test_runner.run_test, daemon=True)
-            test_thread.start()
-
-        def on_progress(value):
-            progress_bar.set(value / 100)
-
-        def on_status(status):
-            status_label.configure(text=status)
-
-        def on_result(result):
-            nonlocal test_completed
-            test_completed = True
-
-            server_info = ""
-            if 'server' in result and result['server']:
-                server = result['server']
-                server_info = f"\nServer: {server.get('sponsor', 'Unknown')} ({server.get('name', 'Unknown')})"
-
-            results_text = (f"Download: {result['download']:.2f} Mbps\n"
-                          f"Upload: {result['upload']:.2f} Mbps\n"
-                          f"Ping: {result['ping']:.2f} ms{server_info}")
-
-            results_label.configure(text=results_text)
-            status_label.configure(text="Speed test completed!")
-
-            action_button.configure(text="Retry", command=start_test)
-            close_button.configure(state="normal")
-
-        def on_error(error):
-            nonlocal test_completed
-            test_completed = True
-
-            results_label.configure(text=f"Error: {error}")
-            status_label.configure(text="Speed test failed")
-
-            action_button.configure(text="Retry", command=start_test)
-            close_button.configure(state="normal")
-
-        # --- Start the first test ---
-        start_test()
-
-    def save_report(self):
-        """Save scan results to CSV"""
-        if not self.all_devices:
-            messagebox.showwarning("No Data", "No devices to save")
-            return
-
-        filename = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            
+            # Run in thread
+            threading.Thread(target=speed_runner.run_test, daemon=True).start()
+        
+        def cancel_test():
+            nonlocal speed_runner
+            if speed_runner:
+                speed_runner.cancel()
+            status_label.configure(text="Test cancelled")
+            start_btn.configure(state="normal")
+            cancel_btn.configure(state="disabled")
+        
+        def show_results(results):
+            status_label.configure(text="Test completed!")
+            download_label.configure(text=f"Download Speed: {results['download']:.2f} Mbps")
+            upload_label.configure(text=f"Upload Speed: {results['upload']:.2f} Mbps")
+            ping_label.configure(text=f"Ping: {results['ping']:.1f} ms")
+            server_label.configure(text=f"Server: {results['server']['name']} ({results['server']['country']})")
+            start_btn.configure(state="normal")
+            cancel_btn.configure(state="disabled")
+        
+        def show_error(error):
+            status_label.configure(text=f"Error: {error}")
+            start_btn.configure(state="normal")
+            cancel_btn.configure(state="disabled")
+        
+        # Buttons
+        start_btn = ctk.CTkButton(
+            button_frame,
+            text="Start Test",
+            command=start_test
         )
-
-        if filename:
-            try:
-                with open(filename, 'w', newline='') as csvfile:
-                    writer = csv.writer(csvfile)
-
-                    # Headers
-                    writer.writerow([
-                        "IP Address", "MAC Address", "Hostname",
-                        "Manufacturer", "Response Time (ms)", "Web Service", "Status"
-                    ])
-
-                    # Data
-                    for device in self.all_devices:
-                        writer.writerow([
-                            device['ip'],
-                            device.get('mac', 'Unknown'),
-                            device.get('hostname', 'Unknown'),
-                            device.get('manufacturer', 'Unknown'),
-                            f"{device.get('response_time', 0) * 1000:.1f}",
-                            device.get('web_service', 'None'),
-                            device.get('status', 'Unknown')
-                        ])
-
-                messagebox.showinfo("Success", f"Report saved to {filename}")
-
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to save report: {e}")
-
-    def open_file(self):
-        """Open CSV file"""
-        filename = filedialog.askopenfilename(
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        start_btn.pack(side="left", padx=5)
+        
+        cancel_btn = ctk.CTkButton(
+            button_frame,
+            text="Cancel",
+            command=cancel_test,
+            state="disabled"
         )
+        cancel_btn.pack(side="left", padx=5)
+        
+        close_btn = ctk.CTkButton(
+            button_frame,
+            text="Close",
+            command=speedtest_window.destroy
+        )
+        close_btn.pack(side="right", padx=5)
+    
+    def show_speedtest_installation_dialog(self):
+        """Show speedtest installation instructions"""
+        install_window = ctk.CTkToplevel(self.root)
+        install_window.title("Speed Test Not Available")
+        install_window.geometry("600x400")
+        install_window.transient(self.root)
+        install_window.grab_set()
+        
+        # Center the window
+        install_window.update_idletasks()
+        x = (install_window.winfo_screenwidth() // 2) - (install_window.winfo_width() // 2)
+        y = (install_window.winfo_screenheight() // 2) - (install_window.winfo_height() // 2)
+        install_window.geometry(f"+{x}+{y}")
+        
+        instructions = """SPEED TEST NOT AVAILABLE
 
-        if filename:
-            try:
-                self.clear_device_table()
+To use the internet speed test feature, you need to install the 'speedtest-cli' library.
 
-                with open(filename, 'r') as csvfile:
-                    reader = csv.DictReader(csvfile)
+INSTALLATION INSTRUCTIONS:
 
-                    for row in reader:
-                        device = {
-                            'ip': row.get('IP Address', ''),
-                            'mac': row.get('MAC Address', 'Unknown'),
-                            'hostname': row.get('Hostname', 'Unknown'),
-                            'manufacturer': row.get('Manufacturer', 'Unknown'),
-                            'response_time': float(row.get('Response Time (ms)', '0')) / 1000,
-                            'web_service': row.get('Web Service', 'None'),
-                            'status': row.get('Status', 'Unknown')
-                        }
+1. Open Command Prompt (Windows) or Terminal (Mac/Linux)
 
-                        self.all_devices.append(device)
-                        self.add_device_to_table(device)
+2. Install speedtest-cli using pip:
+   pip install speedtest-cli
 
-                self.update_status(f"Loaded {len(self.all_devices)} devices from {filename}")
+3. Alternative installation methods:
+   • Using conda: conda install speedtest-cli
+   • Using pip3: pip3 install speedtest-cli
 
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to open file: {e}")
+4. Restart the application after installation
 
-    def on_window_close(self):
-        """Handle window close event - minimize to tray if available"""
-        if self.tray_manager:
-            # Minimize to system tray
-            self.root.withdraw()
-            # Show notification (optional)
-            try:
-                if hasattr(self.tray_manager.icon, 'notify'):
-                    self.tray_manager.icon.notify(
-                        "I.T Assistant minimized to tray",
-                        "Double-click the tray icon to restore"
+ALTERNATIVE SPEED TEST OPTIONS:
+
+• Visit speedtest.net in your web browser
+• Use fast.com by Netflix
+• Run 'speedtest-cli' directly from command line after installation
+
+After installing speedtest-cli, you'll be able to run speed tests directly from this application."""
+        
+        text_widget = ctk.CTkTextbox(
+            install_window,
+            font=ctk.CTkFont(family="Consolas", size=11)
+        )
+        text_widget.pack(fill="both", expand=True, padx=20, pady=20)
+        text_widget.insert("1.0", instructions)
+        text_widget.configure(state="disabled")
+        
+        # Close button
+        close_btn = ctk.CTkButton(
+            install_window,
+            text="Close",
+            command=install_window.destroy
+        )
+        close_btn.pack(pady=(0, 20))
+    
+    # Database methods for notes persistence
+    def init_device_notes_table(self):
+        """Initialize the device notes database table"""
+        try:
+            import sqlite3
+            
+            # Create data directory if it doesn't exist
+            data_dir = os.path.join(os.path.dirname(__file__), 'data')
+            os.makedirs(data_dir, exist_ok=True)
+            
+            # Database path
+            db_path = os.path.join(data_dir, 'device_notes.db')
+            
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS device_notes (
+                        mac_address TEXT PRIMARY KEY,
+                        notes TEXT,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
-            except:
+                ''')
+                conn.commit()
+                
+        except Exception as e:
+            print(f"Error initializing device notes database: {e}")
+    
+    def save_device_notes(self, mac_address, notes):
+        """Save device notes to database"""
+        try:
+            import sqlite3
+            
+            data_dir = os.path.join(os.path.dirname(__file__), 'data')
+            db_path = os.path.join(data_dir, 'device_notes.db')
+            
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO device_notes (mac_address, notes, last_updated)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                ''', (mac_address.upper(), notes))
+                conn.commit()
+                
+            return True
+            
+        except Exception as e:
+            print(f"Error saving device notes: {e}")
+            return False
+    
+    def load_device_notes(self, mac_address):
+        """Load device notes from database"""
+        try:
+            import sqlite3
+            
+            data_dir = os.path.join(os.path.dirname(__file__), 'data')
+            db_path = os.path.join(data_dir, 'device_notes.db')
+            
+            if not os.path.exists(db_path):
+                return ""
+            
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT notes FROM device_notes WHERE mac_address = ?', (mac_address.upper(),))
+                result = cursor.fetchone()
+                
+                return result[0] if result else ""
+                
+        except Exception as e:
+            print(f"Error loading device notes: {e}")
+            return ""
+    
+    def update_all_device_notes(self, mac_address, notes):
+        """Update notes for all devices with the same MAC address"""
+        if not mac_address or mac_address.upper() == 'UNKNOWN':
+            return
+        
+        # Update all devices in memory with the same MAC address
+        for device in self.all_devices:
+            if device.get('mac', '').upper() == mac_address.upper():
+                device['notes'] = notes
+    
+    def load_notes_for_devices_background(self, devices):
+        """Load notes for devices in background thread"""
+        def load_notes():
+            for device in devices:
+                mac = device.get('mac', '')
+                if mac and mac.upper() != 'UNKNOWN':
+                    notes = self.load_device_notes(mac)
+                    device['notes'] = notes
+        
+        threading.Thread(target=load_notes, daemon=True).start()
+    
+    def update_profile_notes(self, profile_name, mac_address, notes):
+        """Update notes in profile if device belongs to a profile"""
+        # This would integrate with the profile manager if available
+        try:
+            if hasattr(self, 'profile_manager'):
+                # The profile manager would handle this
                 pass
-        else:
-            # No tray manager, so close everything and quit
-            # Close live monitor window if open
-            if hasattr(self, 'current_monitor_window') and self.current_monitor_window:
-                try:
-                    self.current_monitor_window.destroy()
-                except:
-                    pass
-            # Quit the application
-            self.root.quit()
+        except Exception:
+            pass
 
     def run(self):
         """Start application"""
+        # Initialize the device notes table on startup
+        self.init_device_notes_table()
+        
         self.update_status("Ready to scan network")
         self.root.mainloop()
 

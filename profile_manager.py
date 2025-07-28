@@ -169,49 +169,122 @@ class ProfileManager:
                 if not profile_name:
                     messagebox.showerror("Error", "Please select a profile.")
                     return
-                    
-                # Load devices from profile
-                cursor.execute("""
-                    SELECT IPAddress, MACAddress, FriendlyName, Hostname, Manufacturer, 
-                           Response, WebService, Notes
-                    FROM Profile WHERE Profile = ?
-                    ORDER BY IPAddress
-                """, (profile_name,))
                 
-                devices = cursor.fetchall()
+                # Create loading dialog
+                loading_dialog = ctk.CTkToplevel(dialog)
+                loading_dialog.title("Loading Profile")
+                loading_dialog.geometry("400x150")
+                loading_dialog.transient(dialog)
+                loading_dialog.grab_set()
                 
-                # Clear current devices and add loaded ones
-                self.app.clear_device_table()
+                # Center the loading dialog
+                loading_dialog.update_idletasks()
+                x = (loading_dialog.winfo_screenwidth() // 2) - (loading_dialog.winfo_width() // 2)
+                y = (loading_dialog.winfo_screenheight() // 2) - (loading_dialog.winfo_height() // 2)
+                loading_dialog.geometry(f"+{x}+{y}")
                 
-                for device_data in devices:
-                    device = {
-                        'ip': device_data[0],
-                        'mac': device_data[1] or 'Unknown',
-                        'friendly_name': device_data[2] or '',
-                        'hostname': device_data[3] or 'Unknown',
-                        'manufacturer': device_data[4] or 'Unknown',
-                        'response_time': device_data[5] / 1000.0 if device_data[5] else 0,  # Convert from ms
-                        'web_service': device_data[6] or '',
-                        'notes': device_data[7] or '',
-                        'status': 'Loaded',
-                        'profile': profile_name
-                    }
-                    self.app.all_devices.append(device)
-                    self.app.add_device_to_table(device)
+                # Loading UI elements
+                loading_label = ctk.CTkLabel(loading_dialog, text=f"Loading profile '{profile_name}'...", font=ctk.CTkFont(size=14))
+                loading_label.pack(pady=20)
                 
-                # Update summary
-                problematic = sum(1 for d in self.app.all_devices if d.get('response_time', 0) * 1000 > 500)
-                self.app.summary_label.configure(
-                    text=f"Devices found: {len(self.app.all_devices)} | Problematic (>500ms): {problematic}"
-                )
+                progress_bar = ctk.CTkProgressBar(loading_dialog, width=350)
+                progress_bar.pack(pady=10)
+                progress_bar.set(0)
                 
-                messagebox.showinfo("Success", f"Loaded {len(devices)} devices from profile '{profile_name}'")
-                self.app.update_status(f"Loaded profile: {profile_name}")
-                # Update the loaded profile label
-                if self.loaded_profile_label:
-                    self.loaded_profile_label.configure(text=f"Profile: {profile_name}")
-                dialog.destroy()
-                conn.close()
+                status_label = ctk.CTkLabel(loading_dialog, text="Preparing...", font=ctk.CTkFont(size=12))
+                status_label.pack(pady=10)
+                
+                # Function to perform loading in thread
+                def load_thread():
+                    try:
+                        # Create new database connection for this thread
+                        thread_conn = sqlite3.connect(self.db_path)
+                        thread_cursor = thread_conn.cursor()
+                        
+                        # Load devices from profile
+                        thread_cursor.execute("""
+                            SELECT IPAddress, MACAddress, FriendlyName, Hostname, Manufacturer, 
+                                   Response, WebService, Notes
+                            FROM Profile WHERE Profile = ?
+                            ORDER BY IPAddress
+                        """, (profile_name,))
+                        
+                        devices_data = thread_cursor.fetchall()
+                        thread_conn.close()
+                        total_devices = len(devices_data)
+                        
+                        # Clear current devices on main thread
+                        loading_dialog.after(0, lambda: self.app.clear_device_table())
+                        
+                        # Process devices in batches
+                        batch_size = 20  # Process 20 devices at a time
+                        devices_to_add = []
+                        
+                        for i, device_data in enumerate(devices_data):
+                            device = {
+                                'ip': device_data[0],
+                                'mac': device_data[1] or 'Unknown',
+                                'friendly_name': device_data[2] or '',
+                                'hostname': device_data[3] or 'Unknown',
+                                'manufacturer': device_data[4] or 'Unknown',
+                                'response_time': device_data[5] / 1000.0 if device_data[5] else 0,  # Convert from ms
+                                'web_service': device_data[6] or '',
+                                'notes': device_data[7] or '',
+                                'status': 'Loaded',
+                                'profile': profile_name
+                            }
+                            devices_to_add.append(device)
+                            
+                            # Update progress
+                            progress = (i + 1) / total_devices
+                            loading_dialog.after(0, lambda p=progress, i=i+1: [
+                                progress_bar.set(p),
+                                status_label.configure(text=f"Loading device {i} of {total_devices}...")
+                            ])
+                            
+                            # Add devices in batches
+                            if len(devices_to_add) >= batch_size or i == len(devices_data) - 1:
+                                batch = devices_to_add.copy()
+                                loading_dialog.after(0, lambda b=batch: self._add_device_batch(b))
+                                devices_to_add.clear()
+                                # Small delay to prevent UI freezing
+                                time.sleep(0.01)
+                        
+                        # Final update on main thread
+                        def finish_loading():
+                            # Update summary
+                            problematic = sum(1 for d in self.app.all_devices if d.get('response_time', 0) * 1000 > 500)
+                            self.app.summary_label.configure(
+                                text=f"Devices found: {len(self.app.all_devices)} | Problematic (>500ms): {problematic}"
+                            )
+                            
+                            self.app.update_status(f"Loaded profile: {profile_name}")
+                            # Update the loaded profile label
+                            if self.loaded_profile_label:
+                                self.loaded_profile_label.configure(text=f"Profile: {profile_name}")
+                            
+                            loading_dialog.destroy()
+                            dialog.destroy()
+                            
+                            messagebox.showinfo("Success", f"Loaded {total_devices} devices from profile '{profile_name}'")
+                        
+                        # Load notes for the devices in background
+                        loading_dialog.after(0, lambda: self.app.load_notes_for_devices_background(devices_to_add))
+                        
+                        loading_dialog.after(100, finish_loading)
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        loading_dialog.after(0, lambda: [
+                            loading_dialog.destroy(),
+                            messagebox.showerror("Error", f"Failed to load profile: {error_msg}")
+                        ])
+                
+                # Start loading in background thread
+                import threading
+                import time
+                thread = threading.Thread(target=load_thread, daemon=True)
+                thread.start()
             
             def delete():
                 profile_name = selected_profile.get()
@@ -245,61 +318,134 @@ class ProfileManager:
     def load_profile_by_name(self, profile_name):
         """Load devices for a specific profile name"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            import threading
+            import time
             
-            cursor.execute("""
-                SELECT IPAddress, MACAddress, FriendlyName, Hostname, Manufacturer, 
-                       Response, WebService, Notes
-                FROM Profile WHERE Profile = ?
-                ORDER BY IPAddress
-            """, (profile_name,))
+            # Create loading dialog
+            loading_dialog = ctk.CTkToplevel(self.app.root)
+            loading_dialog.title("Loading Profile")
+            loading_dialog.geometry("400x150")
+            loading_dialog.transient(self.app.root)
+            loading_dialog.grab_set()
             
-            devices = cursor.fetchall()
+            # Center the loading dialog
+            loading_dialog.update_idletasks()
+            x = (loading_dialog.winfo_screenwidth() // 2) - (loading_dialog.winfo_width() // 2)
+            y = (loading_dialog.winfo_screenheight() // 2) - (loading_dialog.winfo_height() // 2)
+            loading_dialog.geometry(f"+{x}+{y}")
             
-            if not devices:
-                return
-                
-            self.app.clear_device_table()
+            # Loading UI elements
+            loading_label = ctk.CTkLabel(loading_dialog, text=f"Loading profile '{profile_name}'...", font=ctk.CTkFont(size=14))
+            loading_label.pack(pady=20)
             
-            for device_data in devices:
-                device = {
-                    'ip': device_data[0],
-                    'mac': device_data[1] or 'Unknown',
-                    'friendly_name': device_data[2] or '',
-                    'hostname': device_data[3] or 'Unknown',
-                    'manufacturer': device_data[4] or 'Unknown',
-                    'response_time': device_data[5] / 1000.0 if device_data[5] else 0,
-                    'web_service': device_data[6] or '',
-                    'notes': device_data[7] or '',
-                    'status': 'Loaded',
-                    'profile': profile_name
-                }
-                self.app.all_devices.append(device)
-                self.app.add_device_to_table(device)
+            progress_bar = ctk.CTkProgressBar(loading_dialog, width=350)
+            progress_bar.pack(pady=10)
+            progress_bar.set(0)
             
-            problematic = sum(1 for d in self.app.all_devices if d.get('response_time', 0) * 1000 > 500)
-            self.app.summary_label.configure(
-                text=f"Devices found: {len(self.app.all_devices)} | Problematic (>500ms): {problematic}"
-            )
+            status_label = ctk.CTkLabel(loading_dialog, text="Preparing...", font=ctk.CTkFont(size=12))
+            status_label.pack(pady=10)
             
-            self.app.update_status(f"Loaded default profile: {profile_name}")
-            # Update the loaded profile label
-            if self.loaded_profile_label:
-                self.loaded_profile_label.configure(text=f"Profile: {profile_name}")
-            conn.close()
+            def load_thread():
+                try:
+                    # Create new database connection for this thread
+                    thread_conn = sqlite3.connect(self.db_path)
+                    thread_cursor = thread_conn.cursor()
+                    
+                    thread_cursor.execute("""
+                        SELECT IPAddress, MACAddress, FriendlyName, Hostname, Manufacturer, 
+                               Response, WebService, Notes
+                        FROM Profile WHERE Profile = ?
+                        ORDER BY IPAddress
+                    """, (profile_name,))
+                    
+                    devices_data = thread_cursor.fetchall()
+                    
+                    if not devices_data:
+                        thread_conn.close()
+                        loading_dialog.after(0, loading_dialog.destroy)
+                        return
+                    
+                    total_devices = len(devices_data)
+                    
+                    # Clear current devices on main thread
+                    loading_dialog.after(0, lambda: self.app.clear_device_table())
+                    
+                    # Process devices in batches
+                    batch_size = 20
+                    devices_to_add = []
+                    
+                    for i, device_data in enumerate(devices_data):
+                        device = {
+                            'ip': device_data[0],
+                            'mac': device_data[1] or 'Unknown',
+                            'friendly_name': device_data[2] or '',
+                            'hostname': device_data[3] or 'Unknown',
+                            'manufacturer': device_data[4] or 'Unknown',
+                            'response_time': device_data[5] / 1000.0 if device_data[5] else 0,
+                            'web_service': device_data[6] or '',
+                            'notes': device_data[7] or '',
+                            'status': 'Loaded',
+                            'profile': profile_name
+                        }
+                        devices_to_add.append(device)
+                        
+                        # Update progress
+                        progress = (i + 1) / total_devices
+                        loading_dialog.after(0, lambda p=progress, i=i+1: [
+                            progress_bar.set(p),
+                            status_label.configure(text=f"Loading device {i} of {total_devices}...")
+                        ])
+                        
+                        # Add devices in batches
+                        if len(devices_to_add) >= batch_size or i == len(devices_data) - 1:
+                            batch = devices_to_add.copy()
+                            loading_dialog.after(0, lambda b=batch: self._add_device_batch(b))
+                            devices_to_add.clear()
+                            time.sleep(0.01)  # Small delay to prevent UI freezing
+                    
+                    # Final update
+                    def finish_loading():
+                        problematic = sum(1 for d in self.app.all_devices if d.get('response_time', 0) * 1000 > 500)
+                        self.app.summary_label.configure(
+                            text=f"Devices found: {len(self.app.all_devices)} | Problematic (>500ms): {problematic}"
+                        )
+                        
+                        self.app.update_status(f"Loaded default profile: {profile_name}")
+                        if self.loaded_profile_label:
+                            self.loaded_profile_label.configure(text=f"Profile: {profile_name}")
+                        
+                        loading_dialog.destroy()
+                    
+                    # Load notes for the devices in background
+                    loading_dialog.after(0, lambda: self.app.load_notes_for_devices_background(self.app.all_devices))
+                    
+                    loading_dialog.after(100, finish_loading)
+                    thread_conn.close()
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    loading_dialog.after(0, lambda: [
+                        loading_dialog.destroy(),
+                        print(f"Error loading default profile: {error_msg}")
+                    ])
+            
+            # Start loading in background thread
+            thread = threading.Thread(target=load_thread, daemon=True)
+            thread.start()
+            
         except Exception as e:
             print(f"Error loading default profile: {e}")
 
     def add_to_profile(self):
-        """Add selected devices to the currently loaded profile"""
+        """Add selected devices to the currently loaded profile or select a profile"""
         if not self.app.selected_devices:
             messagebox.showwarning("No Devices Selected", "Please select at least one device.")
             return
 
         profile_devices = [d for d in self.app.all_devices if d.get('profile')]
         if not profile_devices:
-            messagebox.showinfo("No Profile Loaded", "Please load a profile before adding devices.")
+            # No profile loaded - show profile selection dialog
+            self._show_profile_selection_for_add()
             return
 
         # Assume a single profile is loaded
@@ -351,6 +497,143 @@ class ProfileManager:
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to add devices to profile: {str(e)}")
+
+    def _show_profile_selection_for_add(self):
+        """Show profile selection dialog when no profile is loaded"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Get list of profiles
+            cursor.execute("SELECT DISTINCT Profile FROM Profile ORDER BY Profile")
+            profiles = [row[0] for row in cursor.fetchall()]
+            
+            if not profiles:
+                messagebox.showinfo("No Profiles", "No saved profiles found. Please create a profile first.")
+                conn.close()
+                return
+                
+            # Create profile selection dialog
+            dialog = ctk.CTkToplevel(self.app.root)
+            dialog.title("Select Profile")
+            dialog.geometry("500x400")
+            dialog.transient(self.app.root)
+            dialog.grab_set()
+            
+            # Center the dialog
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+            y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+            dialog.geometry(f"+{x}+{y}")
+            
+            # Info label
+            info_label = ctk.CTkLabel(
+                dialog, 
+                text="No profile is currently loaded.\nSelect a profile to add the selected devices to:",
+                font=ctk.CTkFont(size=14)
+            )
+            info_label.pack(pady=20)
+            
+            # Create scrollable frame for profiles
+            scroll_frame = ctk.CTkScrollableFrame(dialog, width=450, height=200)
+            scroll_frame.pack(pady=10, padx=20, fill="both", expand=True)
+            
+            selected_profile = ctk.StringVar()
+            
+            for profile in profiles:
+                # Get device count for this profile
+                cursor.execute("SELECT COUNT(*) FROM Profile WHERE Profile = ?", (profile,))
+                count = cursor.fetchone()[0]
+                
+                radio = ctk.CTkRadioButton(
+                    scroll_frame,
+                    text=f"{profile} ({count} devices)",
+                    variable=selected_profile,
+                    value=profile
+                )
+                radio.pack(pady=5, padx=10, anchor="w")
+            
+            # Set default selection
+            if profiles:
+                selected_profile.set(profiles[0])
+            
+            # Button frame
+            button_frame = ctk.CTkFrame(dialog)
+            button_frame.pack(pady=20)
+            
+            def add_to_selected_profile():
+                profile_name = selected_profile.get()
+                if not profile_name:
+                    messagebox.showerror("Error", "Please select a profile.")
+                    return
+                
+                # Check which devices already exist in the profile
+                existing_macs = set()
+                cursor.execute("SELECT MACAddress FROM Profile WHERE Profile = ?", (profile_name,))
+                existing_macs = {self.normalize_mac(row[0]) for row in cursor.fetchall()}
+                
+                added_count = 0
+                skipped_count = 0
+                
+                for device in self.app.selected_devices:
+                    # Normalize device MAC
+                    mac = self.normalize_mac(device.get('mac', ''))
+                    if not mac or mac in existing_macs:
+                        skipped_count += 1
+                        continue
+                    
+                    cursor.execute("""
+                        INSERT INTO Profile (Date, Time, Profile, IPAddress, MACAddress, FriendlyName, 
+                                           Hostname, Manufacturer, Response, WebService, Notes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            datetime.date.today().strftime('%Y-%m-%d'),
+                            datetime.datetime.now().strftime('%H:%M:%S'),
+                            profile_name,
+                            device.get('ip', ''),
+                            device.get('mac', ''),
+                            device.get('friendly_name', ''),
+                            device.get('hostname', ''),
+                            device.get('manufacturer', ''),
+                            int(device.get('response_time', 0) * 1000),
+                            device.get('web_service', ''),
+                            device.get('notes', '')
+                        ))
+                    added_count += 1
+                
+                conn.commit()
+                conn.close()
+                
+                if added_count > 0:
+                    messagebox.showinfo("Success", 
+                                        f"Added {added_count} device(s) to profile '{profile_name}'.\n" +
+                                        (f"{skipped_count} device(s) already exist in the profile." if skipped_count > 0 else ""))
+                else:
+                    messagebox.showinfo("No Devices Added", 
+                                        f"All selected devices already exist in profile '{profile_name}'.")
+                
+                dialog.destroy()
+            
+            add_btn = ctk.CTkButton(
+                button_frame, 
+                text="Add to Profile", 
+                command=add_to_selected_profile, 
+                width=120
+            )
+            add_btn.pack(side="left", padx=5)
+            
+            cancel_btn = ctk.CTkButton(
+                button_frame, 
+                text="Cancel", 
+                command=dialog.destroy, 
+                width=100
+            )
+            cancel_btn.pack(side="left", padx=5)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to show profile selection: {str(e)}")
+            if 'conn' in locals():
+                conn.close()
 
     def set_default_profile(self):
         """Set a selected profile as default"""
@@ -511,6 +794,17 @@ class ProfileManager:
         if len(mac_clean) == 12:  # Valid MAC has 12 hex characters
             return ':'.join(mac_clean[i:i+2] for i in range(0, 12, 2))
         return None
+    
+    def _add_device_batch(self, devices):
+        """Add a batch of devices to the table efficiently"""
+        for device in devices:
+            self.app.all_devices.append(device)
+            self.app.add_device_to_table(device, batch_mode=True)
+        # Force a single UI update after adding all devices in the batch
+        self.app.table_frame.update_idletasks()
+        
+        # Load notes for all devices in background
+        self.app.load_notes_for_devices_background(devices)
     
     def update_profile(self):
         """Update the response times for devices in the loaded profile"""
@@ -842,58 +1136,77 @@ class ProfileManager:
         response_label.grid(row=row_num, column=7, padx=5, pady=2)
         row_widgets.append(response_label)
         
-        # Web Service
+        # Web Service (clickable label)
         web_service = device.get('web_service')
         if web_service:
-            web_btn = ctk.CTkButton(
+            web_label = ctk.CTkLabel(
                 self.app.table_frame,
                 text="Open",
-                width=60,
-                height=24,
-                command=lambda: webbrowser.open(web_service)
+                text_color="#1f538d",  # Blue color to indicate clickability
+                cursor="hand2"
             )
-            web_btn.grid(row=row_num, column=8, padx=5, pady=2)
-            row_widgets.append(web_btn)
+            web_label.grid(row=row_num, column=8, padx=5, pady=2)
+            
+            # Add click event and hover effects
+            web_label.bind("<Button-1>", lambda e: webbrowser.open(web_service))
+            web_label.bind("<Enter>", lambda e: web_label.configure(text_color="#0d47a1"))  # Darker blue on hover
+            web_label.bind("<Leave>", lambda e: web_label.configure(text_color="#1f538d"))  # Original blue
+            
+            row_widgets.append(web_label)
         else:
             web_label = ctk.CTkLabel(self.app.table_frame, text="None", text_color=text_color)
             web_label.grid(row=row_num, column=8, padx=5, pady=2)
             row_widgets.append(web_label)
         
-        # Actions buttons
+        # Actions clickable labels
         actions_frame = ctk.CTkFrame(self.app.table_frame)
         actions_frame.grid(row=row_num, column=9, padx=5, pady=2)
 
-        details_btn = ctk.CTkButton(
+        # Details clickable label
+        details_label = ctk.CTkLabel(
             actions_frame,
             text="Details",
-            width=60,
-            height=20,
-            command=lambda dev=device: self.app.show_device_details(dev)
+            text_color="#1f538d",  # Blue color to indicate clickability
+            cursor="hand2"
         )
-        details_btn.grid(row=0, column=0, padx=2, pady=1)
+        details_label.grid(row=0, column=0, padx=2, pady=1)
+        
+        # Add click event and hover effects for Details
+        details_label.bind("<Button-1>", lambda e, dev=device: self.app.show_device_details(dev))
+        details_label.bind("<Enter>", lambda e: details_label.configure(text_color="#0d47a1"))  # Darker blue on hover
+        details_label.bind("<Leave>", lambda e: details_label.configure(text_color="#1f538d"))  # Original blue
 
-        nmap_btn = ctk.CTkButton(
+        # Nmap clickable label
+        nmap_label = ctk.CTkLabel(
             actions_frame,
             text="Nmap",
-            width=50,
-            height=20,
-            command=lambda dev=device: self.app.show_nmap_dialog(dev.get('ip'))
+            text_color="#1f538d",  # Blue color to indicate clickability
+            cursor="hand2"
         )
-        nmap_btn.grid(row=0, column=1, padx=2, pady=1)
+        nmap_label.grid(row=0, column=1, padx=2, pady=1)
+        
+        # Add click event and hover effects for Nmap
+        nmap_label.bind("<Button-1>", lambda e, dev=device: self.app.show_nmap_dialog(dev.get('ip')))
+        nmap_label.bind("<Enter>", lambda e: nmap_label.configure(text_color="#0d47a1"))  # Darker blue on hover
+        nmap_label.bind("<Leave>", lambda e: nmap_label.configure(text_color="#1f538d"))  # Original blue
 
         row_widgets.append(actions_frame)
 
-        # Notes button for new devices
-        notes_btn = ctk.CTkButton(
+        # Notes clickable label for new devices
+        notes_label = ctk.CTkLabel(
             self.app.table_frame,
             text="Add Notes",
-            width=80,
-            height=24,
-            fg_color=None,  # Default color for new devices
-            command=lambda dev=device: self.app.show_notes_dialog(dev)
+            text_color="#1f538d",  # Blue color to indicate clickability
+            cursor="hand2"
         )
-        notes_btn.grid(row=row_num, column=10, padx=5, pady=2)
-        row_widgets.append(notes_btn)
+        notes_label.grid(row=row_num, column=10, padx=5, pady=2)
+        
+        # Add click event and hover effects for Notes
+        notes_label.bind("<Button-1>", lambda e, dev=device: self.app.show_notes_dialog(dev))
+        notes_label.bind("<Enter>", lambda e: notes_label.configure(text_color="#0d47a1"))  # Darker blue on hover
+        notes_label.bind("<Leave>", lambda e: notes_label.configure(text_color="#1f538d"))  # Original blue
+        
+        row_widgets.append(notes_label)
 
         self.app.device_rows.append(row_widgets)
         
@@ -1001,10 +1314,9 @@ def setup_profile_buttons(app):
     # Create profile manager instance
     profile_manager = ProfileManager(app)
     
-    # Create a new frame for profile buttons that sits between search bar and device table
-    # This will be inserted as row 2, pushing the device table down to row 3
+    # Create a new frame for profile buttons at the top of main content area
     profile_frame = ctk.CTkFrame(app.main_frame)
-    profile_frame.grid(row=2, column=0, padx=20, pady=(10, 10), sticky="ew")
+    profile_frame.grid(row=0, column=0, padx=20, pady=(10, 10), sticky="ew")
     profile_frame.grid_columnconfigure(0, weight=1)  # Allow frame to expand
     
     # Create left frame for loaded profile name
@@ -1090,9 +1402,5 @@ def setup_profile_buttons(app):
         height=32
     )
     scan_new_btn.pack(side="left", padx=5)
-    
-    
-    # Update the device table to be row 3 instead of row 2
-    app.table_frame.grid(row=3, column=0, padx=20, pady=10, sticky="nsew")
     
     return profile_manager
