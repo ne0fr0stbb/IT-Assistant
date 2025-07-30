@@ -1094,35 +1094,37 @@ class ProfileManager:
         )
         checkbox.grid(row=row_num, column=0, padx=5, pady=2, sticky="w")
         row_widgets.append(checkbox)
-        
+
+        '''
         # Profile (empty for new devices)
         profile_label = ctk.CTkLabel(self.app.table_frame, text="", text_color=text_color)
         profile_label.grid(row=row_num, column=1, padx=5, pady=2)
         row_widgets.append(profile_label)
+        '''
 
         # IP Address
         ip_label = ctk.CTkLabel(self.app.table_frame, text=device['ip'], text_color=text_color)
-        ip_label.grid(row=row_num, column=2, padx=5, pady=2)
+        ip_label.grid(row=row_num, column=1, padx=5, pady=2)
         row_widgets.append(ip_label)
 
         # MAC Address
         mac_label = ctk.CTkLabel(self.app.table_frame, text=device.get('mac', 'Unknown'), text_color=text_color)
-        mac_label.grid(row=row_num, column=3, padx=5, pady=2)
+        mac_label.grid(row=row_num, column=2, padx=5, pady=2)
         row_widgets.append(mac_label)
         
         # Hostname
         hostname_label = ctk.CTkLabel(self.app.table_frame, text=device.get('hostname', 'Unknown'), text_color=text_color)
-        hostname_label.grid(row=row_num, column=4, padx=5, pady=2)
+        hostname_label.grid(row=row_num, column=3, padx=5, pady=2)
         row_widgets.append(hostname_label)
         
         # Friendly Name
         friendly_name_label = ctk.CTkLabel(self.app.table_frame, text="", text_color=text_color)
-        friendly_name_label.grid(row=row_num, column=5, padx=5, pady=2)
+        friendly_name_label.grid(row=row_num, column=4, padx=5, pady=2)
         row_widgets.append(friendly_name_label)
 
         # Manufacturer
         manufacturer_label = ctk.CTkLabel(self.app.table_frame, text=device.get('manufacturer', 'Unknown'), text_color=text_color)
-        manufacturer_label.grid(row=row_num, column=6, padx=5, pady=2)
+        manufacturer_label.grid(row=row_num, column=5, padx=5, pady=2)
         row_widgets.append(manufacturer_label)
         
         # Response Time
@@ -1133,7 +1135,7 @@ class ProfileManager:
             text=f"{response_ms:.0f}ms",
             text_color=response_color
         )
-        response_label.grid(row=row_num, column=7, padx=5, pady=2)
+        response_label.grid(row=row_num, column=6, padx=5, pady=2)
         row_widgets.append(response_label)
         
         # Web Service (clickable label)
@@ -1145,7 +1147,7 @@ class ProfileManager:
                 text_color="#1f538d",  # Blue color to indicate clickability
                 cursor="hand2"
             )
-            web_label.grid(row=row_num, column=8, padx=5, pady=2)
+            web_label.grid(row=row_num, column=7, padx=5, pady=2)
             
             # Add click event and hover effects
             web_label.bind("<Button-1>", lambda e: webbrowser.open(web_service))
@@ -1155,12 +1157,12 @@ class ProfileManager:
             row_widgets.append(web_label)
         else:
             web_label = ctk.CTkLabel(self.app.table_frame, text="None", text_color=text_color)
-            web_label.grid(row=row_num, column=8, padx=5, pady=2)
+            web_label.grid(row=row_num, column=7, padx=5, pady=2)
             row_widgets.append(web_label)
         
         # Actions clickable labels
         actions_frame = ctk.CTkFrame(self.app.table_frame)
-        actions_frame.grid(row=row_num, column=9, padx=5, pady=2)
+        actions_frame.grid(row=row_num, column=8, padx=5, pady=2)
 
         # Details clickable label
         details_label = ctk.CTkLabel(
@@ -1199,7 +1201,7 @@ class ProfileManager:
             text_color="#1f538d",  # Blue color to indicate clickability
             cursor="hand2"
         )
-        notes_label.grid(row=row_num, column=10, padx=5, pady=2)
+        notes_label.grid(row=row_num, column=9, padx=5, pady=2)
         
         # Add click event and hover effects for Notes
         notes_label.bind("<Button-1>", lambda e, dev=device: self.app.show_notes_dialog(dev))
@@ -1321,13 +1323,15 @@ def setup_profile_buttons(app):
     
     # Create left frame for loaded profile name
     left_frame = ctk.CTkFrame(profile_frame)
-    left_frame.pack(side="left", pady=5, padx=10)
+    left_frame.pack(side="left", pady=5, padx=10, fill="x", expand=True)
     
     # Add loaded profile label
     loaded_profile_label = ctk.CTkLabel(
         left_frame,
         text="No profile loaded",
-        font=ctk.CTkFont(size=16, weight="bold")
+        font=ctk.CTkFont(size=18, weight="bold"),
+        text_color="#008000" # Lighter gray for emphasis
+
     )
     loaded_profile_label.pack(side="left")
     

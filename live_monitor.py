@@ -257,6 +257,7 @@ class LiveMonitor:
         x = (screen_width - window_width) // 2
         y = (screen_height - window_height) // 2
         monitor_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        monitor_window.minsize(1280, 720)  # Set minimum size
         monitor_window.state('normal')
         
         # Set matplotlib style for dark theme

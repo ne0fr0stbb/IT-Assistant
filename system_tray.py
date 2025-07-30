@@ -120,11 +120,19 @@ class SystemTrayManager:
         """Show or hide the main window"""
         def toggle():
             if self.app.root.winfo_viewable():
-                self.app.root.withdraw()
+                # Use optimized minimize if available
+                if hasattr(self.app, 'minimize_to_tray'):
+                    self.app.minimize_to_tray()
+                else:
+                    self.app.root.withdraw()
             else:
-                self.app.root.deiconify()
-                self.app.root.lift()
-                self.app.root.focus_force()
+                # Use optimized restore if available
+                if hasattr(self.app, 'restore_from_tray'):
+                    self.app.restore_from_tray()
+                else:
+                    self.app.root.deiconify()
+                    self.app.root.lift()
+                    self.app.root.focus_force()
                 
                 # Also restore minimized live monitor if exists
                 if hasattr(self.app, 'minimized_monitor_window') and self.app.minimized_monitor_window:
@@ -140,8 +148,12 @@ class SystemTrayManager:
     def start_scan(self, icon, item):
         """Start network scan from tray"""
         def scan():
-            self.app.root.deiconify()
-            self.app.root.lift()
+            # Use optimized restore if available
+            if hasattr(self.app, 'restore_from_tray'):
+                self.app.restore_from_tray()
+            else:
+                self.app.root.deiconify()
+                self.app.root.lift()
             self.app.start_scan()
         
         self.app.root.after(0, scan)

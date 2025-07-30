@@ -40,6 +40,7 @@ import re
 
 # Import custom modules
 from network_scanner import NetworkScanner
+from database_setup import setup_database
 
 # Import SSH functionality
 try:
@@ -65,6 +66,13 @@ try:
     SPEEDTEST_AVAILABLE = True
 except ImportError:
     SPEEDTEST_AVAILABLE = False
+
+# Import tracemap functionality
+try:
+    from tracemap import TraceMap
+    TRACEMAP_AVAILABLE = True
+except ImportError:
+    TRACEMAP_AVAILABLE = False
 
 # Import settings system
 try:
@@ -252,6 +260,12 @@ class NetworkMonitorApp:
         self.nmap_runner = nmap_runner
         self.ssh_client = ssh_client_module
         
+        # Initialize tracemap
+        if TRACEMAP_AVAILABLE:
+            self.tracemap = TraceMap(self.root)
+        else:
+            self.tracemap = None
+        
         # Initialize system tray
         if SYSTRAY_AVAILABLE:
             self.tray_manager = SystemTrayManager(self)
@@ -300,20 +314,80 @@ class NetworkMonitorApp:
     def on_window_close(self):
         """Handle window close event - minimize to tray if available, otherwise quit"""
         if self.tray_manager:
-            # Minimize to system tray instead of closing
-            self.root.withdraw()
-            try:
-                if hasattr(self.tray_manager, 'icon') and self.tray_manager.icon:
-                    self.tray_manager.icon.notify(
-                        "I.T Assistant minimized to tray",
-                        "Double-click to restore or right-click for options"
-                    )
-            except Exception:
-                # Notification failed, but that's okay
-                pass
+            # Use iconify for faster minimize to tray
+            self.minimize_to_tray()
         else:
             # No tray manager available, quit the application
             self.quit_application()
+    
+    def minimize_to_tray(self):
+        """Minimize window to system tray with optimized performance"""
+        try:
+            # Store current window state for faster restoration
+            self.window_state = {
+                'geometry': self.root.geometry(),
+                'state': self.root.state(),
+                'focus_widget': self.root.focus_get()
+            }
+            
+            # Use iconify instead of withdraw for faster operation
+            self.root.iconify()
+            
+            # Hide from taskbar
+            self.root.withdraw()
+            
+            # Show tray notification
+            if hasattr(self.tray_manager, 'icon') and self.tray_manager.icon:
+                self.tray_manager.icon.notify(
+                    "I.T Assistant minimized to tray",
+                    "Double-click to restore or right-click for options"
+                )
+        except Exception as e:
+            print(f"Error minimizing to tray: {e}")
+            # Fallback to simple withdraw
+            self.root.withdraw()
+    
+    def restore_from_tray(self):
+        """Restore window from system tray with optimized performance"""
+        try:
+            # Restore window state first
+            self.root.deiconify()
+            
+            # Apply saved window state if available
+            if hasattr(self, 'window_state') and self.window_state:
+                try:
+                    # Restore geometry if it was saved
+                    if 'geometry' in self.window_state:
+                        self.root.geometry(self.window_state['geometry'])
+                    
+                    # Restore window state
+                    if 'state' in self.window_state and self.window_state['state'] == 'zoomed':
+                        self.root.state('zoomed')
+                except Exception:
+                    pass  # Ignore geometry errors
+            
+            # Bring window to front
+            self.root.lift()
+            self.root.attributes('-topmost', True)
+            self.root.attributes('-topmost', False)
+            
+            # Force focus and update
+            self.root.focus_force()
+            self.root.update_idletasks()
+            
+            # Restore focus to previously focused widget if available
+            if hasattr(self, 'window_state') and self.window_state and 'focus_widget' in self.window_state:
+                try:
+                    if self.window_state['focus_widget']:
+                        self.window_state['focus_widget'].focus_set()
+                except Exception:
+                    pass  # Widget might not exist anymore
+                    
+        except Exception as e:
+            print(f"Error restoring from tray: {e}")
+            # Fallback restoration
+            self.root.deiconify()
+            self.root.lift()
     
     def quit_application(self):
         """Properly quit the application"""
@@ -408,6 +482,10 @@ class NetworkMonitorApp:
                 except Exception:
                     mac_addr = "Unknown"
                 
+                # Enhanced MAC address detection if the above method fails
+                if mac_addr == "Unknown":
+                    mac_addr = self.get_mac_address_enhanced(local_ip)
+                
                 # Update labels on main thread
                 self.root.after(0, lambda: self.local_ip_label.configure(text=f"Local IP: {local_ip}"))
                 self.root.after(0, lambda: self.subnet_label.configure(text=f"Subnet: {subnet}"))
@@ -431,47 +509,101 @@ class NetworkMonitorApp:
         # Run in thread to avoid blocking UI
         threading.Thread(target=_update_info, daemon=True).start()
     
+    def get_mac_address_enhanced(self, local_ip):
+        """Enhanced MAC address detection with multiple fallback methods"""
+        try:
+            import psutil
+            interfaces = psutil.net_if_addrs()
+            
+            for interface_name, addresses in interfaces.items():
+                has_ip = False
+                mac = None
+                
+                for addr in addresses:
+                    # Check if this interface has the local IP
+                    if addr.family == socket.AF_INET and addr.address == local_ip:
+                        has_ip = True
+                    
+                    # Look for MAC address using different methods
+                    if hasattr(psutil, 'AF_LINK') and addr.family == psutil.AF_LINK:
+                        mac = addr.address
+                    elif hasattr(addr.family, 'name') and addr.family.name == 'AF_LINK':
+                        mac = addr.address
+                    elif addr.family == 17:  # AF_PACKET on Linux
+                        mac = addr.address
+                    elif addr.family == -1:  # Sometimes MAC addresses have family -1
+                        if ':' in str(addr.address) and len(str(addr.address)) == 17:
+                            mac = addr.address
+                
+                # If we found both the IP and MAC for this interface, return it
+                if has_ip and mac:
+                    return mac.upper()
+            
+            # Fallback: try to get MAC using uuid.getnode()
+            import uuid
+            mac_int = uuid.getnode()
+            mac_hex = ':'.join([
+                f"{(mac_int >> i) & 0xff:02x}" 
+                for i in range(0, 48, 8)
+            ][::-1])
+            return mac_hex.upper()
+            
+        except Exception as e:
+            print(f"Enhanced MAC detection failed: {e}")
+            return "Unknown"
+    
+    def close_existing_menu(self):
+        """Close the existing menu window if it's open."""
+        if hasattr(self, 'active_menu_window') and self.active_menu_window:
+            self.active_menu_window.destroy()
+            self.active_menu_window = None
+
     def show_file_menu(self):
         """Show file menu options"""
+        self.close_existing_menu()  # Ensure any existing menu is closed
+        
         # Create a simple popup menu
-        menu_window = ctk.CTkToplevel(self.root)
-        menu_window.title("File Menu")
-        menu_window.geometry("200x150")
-        menu_window.transient(self.root)
-        menu_window.resizable(False, False)
+        self.active_menu_window = ctk.CTkToplevel(self.root)
+        self.active_menu_window.title("File Menu")
+        self.active_menu_window.geometry("200x150")
+        self.active_menu_window.transient(self.root)
+        self.active_menu_window.resizable(False, False)
         
         # Position near the button
         x = self.root.winfo_x() + 50
         y = self.root.winfo_y() + 80
-        menu_window.geometry(f"+{x}+{y}")
+        self.active_menu_window.geometry(f"+{x}+{y}")
         
-        ctk.CTkButton(menu_window, text="Export Device List", 
-                     command=lambda: [self.export_device_list(), menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
-        ctk.CTkButton(menu_window, text="Import Device List", 
-                     command=lambda: [self.import_device_list(), menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
-        ctk.CTkButton(menu_window, text="Exit", 
-                     command=lambda: [menu_window.destroy(), self.quit_application()]).pack(pady=5, padx=10, fill="x")
+        ctk.CTkButton(self.active_menu_window, text="Export Device List", 
+                     command=lambda: [self.export_device_list(), self.active_menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
+        ctk.CTkButton(self.active_menu_window, text="Import Device List", 
+                     command=lambda: [self.import_device_list(), self.active_menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
+        ctk.CTkButton(self.active_menu_window, text="Exit", 
+                     command=lambda: [self.active_menu_window.destroy(), self.quit_application()]).pack(pady=5, padx=10, fill="x")
     
     def show_options_menu(self):
         """Show options menu"""
-        menu_window = ctk.CTkToplevel(self.root)
-        menu_window.title("Options Menu")
-        menu_window.geometry("200x120")
-        menu_window.transient(self.root)
-        menu_window.resizable(False, False)
+        self.close_existing_menu()  # Ensure any existing menu is closed
+        
+        self.active_menu_window = ctk.CTkToplevel(self.root)
+        self.active_menu_window.title("Options Menu")
+        self.active_menu_window.geometry("200x120")
+        self.active_menu_window.transient(self.root)
+        self.active_menu_window.resizable(False, False)
         
         # Position near the button
         x = self.root.winfo_x() + 120
         y = self.root.winfo_y() + 80
-        menu_window.geometry(f"+{x}+{y}")
+        self.active_menu_window.geometry(f"+{x}+{y}")
         
-        ctk.CTkButton(menu_window, text="Settings", 
-                     command=lambda: [self.show_settings(), menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
-        ctk.CTkButton(menu_window, text="Preferences", 
-                     command=lambda: [self.show_preferences(), menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
+        ctk.CTkButton(self.active_menu_window, text="Settings", 
+                     command=lambda: [self.show_settings(), self.active_menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
+        ctk.CTkButton(self.active_menu_window, text="Preferences", 
+                     command=lambda: [self.show_preferences(), self.active_menu_window.destroy()]).pack(pady=5, padx=10, fill="x")
     
     def show_about_menu(self):
         """Show about menu"""
+        self.close_existing_menu()  # Ensure any existing menu is closed
         self.show_about()
     
     def show_about(self):
@@ -826,8 +958,9 @@ Developed with Python and CustomTkinter
         tools_frame.grid_rowconfigure(0, weight=0)  # Title
         tools_frame.grid_rowconfigure(1, weight=1)  # Live Monitor button
         tools_frame.grid_rowconfigure(2, weight=1)  # SSH button
-        tools_frame.grid_rowconfigure(3, weight=1)  # Nmap button
-        tools_frame.grid_rowconfigure(4, weight=1)  # Speed test button
+        tools_frame.grid_rowconfigure(3, weight=1)  # TraceMap button
+        tools_frame.grid_rowconfigure(4, weight=1)  # Nmap button
+        tools_frame.grid_rowconfigure(5, weight=1)  # Speed test button
 
         # Tools title
         ctk.CTkLabel(tools_frame, text="Network Tools:",
@@ -857,6 +990,16 @@ Developed with Python and CustomTkinter
         )
         self.ssh_btn.grid(row=2, column=0, padx=8, pady=4, sticky="ew")
 
+        # Traceroute button
+        self.traceroute_btn = ctk.CTkButton(
+            tools_frame,
+            text="Traceroute",
+            command=self.open_traceroute_choice_dialog,
+            height=button_height,
+            font=button_font
+        )
+        self.traceroute_btn.grid(row=3, column=0, padx=8, pady=4, sticky="ew")
+
         '''
         # Nmap Scan Selected button
         self.nmap_scan_btn = ctk.CTkButton(
@@ -876,7 +1019,7 @@ Developed with Python and CustomTkinter
             height=button_height,
             font=button_font
         )
-        self.speedtest_btn.grid(row=4, column=0, padx=8, pady=(4, 12), sticky="ew")
+        self.speedtest_btn.grid(row=5, column=0, padx=8, pady=(4, 12), sticky="ew")
 
         # Network Information frame
         info_frame = ctk.CTkFrame(self.sidebar)
@@ -942,8 +1085,8 @@ Developed with Python and CustomTkinter
         search_frame.grid_columnconfigure(3, weight=2)  # Summary label weight
 
         # Search entry (half size)
-        self.search_input = ctk.CTkEntry(search_frame, placeholder_text="Search devices...")
-        self.search_input.grid(row=0, column=0, padx=(10, 5), pady=5)
+        self.search_input = ctk.CTkEntry(search_frame, placeholder_text="Search devices, I.P, Hostname, Manufacturer...")
+        self.search_input.grid(row=0, column=0, padx=(10, 5), pady=0, sticky="ew")
         # Remove the automatic search on typing and add Enter key binding
         self.search_input.bind("<Return>", lambda event: self.perform_search())
 
@@ -991,12 +1134,14 @@ Developed with Python and CustomTkinter
         )
         select_all_btn.pack(side="right", padx=5)
         
-        # Configure column weights for equal spacing
-        for i in range(11):  # Updated from 8 to 11 for new columns
-            self.table_frame.grid_columnconfigure(i, weight=1, minsize=100)
+        # Configure column weights for spacing - removed profile column
+        column_weights = [1, 1, 1, 1, 1, 2, 1, 1, 1, 1]  # Manufacturer column (index 5) gets weight 2
+        for i, weight in enumerate(column_weights):
+            minsize = 150 if i == 5 else 100  # Manufacturer column gets larger minsize
+            self.table_frame.grid_columnconfigure(i, weight=weight, minsize=minsize)
         
-        # Table headers - Updated to include new columns
-        headers = ["Select", "Profile", "IP Address", "MAC Address", "Hostname", "Friendly Name", "Manufacturer", "Response Time", "Web Service", "Actions", "Notes"]
+        # Table headers - Removed Profile column
+        headers = ["Select", "IP Address", "MAC Address", "Hostname", "Friendly Name", "Manufacturer", "Response Time", "Web Service", "Actions", "Notes"]
         for i, header in enumerate(headers):
             label = ctk.CTkLabel(
                 self.table_frame, 
@@ -1390,10 +1535,28 @@ Developed with Python and CustomTkinter
         if not device:
             return
             
+        # Debug: Print device structure
+        print(f"DEBUG: Adding device to table: {device}")
+        print(f"DEBUG: Device keys: {list(device.keys())}")
+            
         row_num = len(self.device_rows) + 2  # +2 because row 0 is controls, row 1 is headers
         row_widgets = []
         
-        # Select checkbox - left-aligned
+        # Ensure device has all required fields with defaults
+        device_data = {
+            'ip': device.get('ip', 'Unknown'),
+            'mac': device.get('mac', 'Unknown'),
+            'hostname': device.get('hostname', 'Unknown'),
+            'friendly_name': device.get('friendly_name', ''),
+            'manufacturer': device.get('manufacturer', 'Unknown'),
+            'response_time': device.get('response_time', 0),
+            'web_service': device.get('web_service', None),
+            'notes': device.get('notes', '')
+        }
+        
+        print(f"DEBUG: Processed device_data: {device_data}")
+        
+        # Select checkbox - Column 0
         var = tk.BooleanVar()
         checkbox = ctk.CTkCheckBox(
             self.table_frame, 
@@ -1404,37 +1567,33 @@ Developed with Python and CustomTkinter
         checkbox.grid(row=row_num, column=0, padx=5, pady=2, sticky="w")
         row_widgets.append(checkbox)
         
-        # Profile (new column)
-        profile_label = ctk.CTkLabel(self.table_frame, text=device.get('profile', ''))
-        profile_label.grid(row=row_num, column=1, padx=5, pady=2)
-        row_widgets.append(profile_label)
-
-        # IP Address
-        ip_label = ctk.CTkLabel(self.table_frame, text=device['ip'])
-        ip_label.grid(row=row_num, column=2, padx=5, pady=2)
+        # IP Address - Column 1
+        ip_label = ctk.CTkLabel(self.table_frame, text=device_data['ip'])
+        ip_label.grid(row=row_num, column=1, padx=5, pady=2)
         row_widgets.append(ip_label)
 
-        # MAC Address
-        mac_label = ctk.CTkLabel(self.table_frame, text=device.get('mac', 'Unknown'))
-        mac_label.grid(row=row_num, column=3, padx=5, pady=2)
+        # MAC Address - Column 2
+        mac_label = ctk.CTkLabel(self.table_frame, text=device_data['mac'])
+        mac_label.grid(row=row_num, column=2, padx=5, pady=2)
         row_widgets.append(mac_label)
         
-        # Hostname
-        hostname_label = ctk.CTkLabel(self.table_frame, text=device.get('hostname', 'Unknown'))
-        hostname_label.grid(row=row_num, column=4, padx=5, pady=2)
+        # Hostname - Column 3
+        hostname_label = ctk.CTkLabel(self.table_frame, text=device_data['hostname'])
+        hostname_label.grid(row=row_num, column=3, padx=5, pady=2)
         row_widgets.append(hostname_label)
         
-        # Friendly Name (new column)
-        friendly_name_label = ctk.CTkLabel(self.table_frame, text=device.get('friendly_name', ''))
-        friendly_name_label.grid(row=row_num, column=5, padx=5, pady=2)
+        # Friendly Name - Column 4
+        friendly_name_text = device_data['friendly_name'] if device_data['friendly_name'] else '-'
+        friendly_name_label = ctk.CTkLabel(self.table_frame, text=friendly_name_text)
+        friendly_name_label.grid(row=row_num, column=4, padx=5, pady=2)
         row_widgets.append(friendly_name_label)
 
-        # Manufacturer
-        manufacturer_label = ctk.CTkLabel(self.table_frame, text=device.get('manufacturer', 'Unknown'))
-        manufacturer_label.grid(row=row_num, column=6, padx=5, pady=2)
+        # Manufacturer - Column 5
+        manufacturer_label = ctk.CTkLabel(self.table_frame, text=device_data['manufacturer'])
+        manufacturer_label.grid(row=row_num, column=5, padx=5, pady=2)
         row_widgets.append(manufacturer_label)
         
-        # Response Time
+        # Response Time (moved from column 7 to column 6)
         response_ms = device.get('response_time', 0) * 1000
         response_color = "#f44336" if response_ms > 500 else None
         response_label = ctk.CTkLabel(
@@ -1442,10 +1601,10 @@ Developed with Python and CustomTkinter
             text=f"{response_ms:.0f}ms",
             text_color=response_color
         )
-        response_label.grid(row=row_num, column=7, padx=5, pady=2)
+        response_label.grid(row=row_num, column=6, padx=5, pady=2)
         row_widgets.append(response_label)
         
-        # Web Service (clickable label)
+        # Web Service (moved from column 8 to column 7)
         web_service = device.get('web_service')
         if web_service:
             web_label = ctk.CTkLabel(
@@ -1454,7 +1613,7 @@ Developed with Python and CustomTkinter
                 text_color="#1f538d",  # Blue color to indicate clickability
                 cursor="hand2"
             )
-            web_label.grid(row=row_num, column=8, padx=5, pady=2)
+            web_label.grid(row=row_num, column=7, padx=5, pady=2)
             
             # Add click event and hover effects
             web_label.bind("<Button-1>", lambda e: webbrowser.open(web_service))
@@ -1464,12 +1623,12 @@ Developed with Python and CustomTkinter
             row_widgets.append(web_label)
         else:
             web_label = ctk.CTkLabel(self.table_frame, text="None")
-            web_label.grid(row=row_num, column=8, padx=5, pady=2)
+            web_label.grid(row=row_num, column=7, padx=5, pady=2)
             row_widgets.append(web_label)
         
-        # Actions clickable labels
+        # Actions clickable labels (moved from column 9 to column 8)
         actions_frame = ctk.CTkFrame(self.table_frame)
-        actions_frame.grid(row=row_num, column=9, padx=5, pady=2)
+        actions_frame.grid(row=row_num, column=8, padx=5, pady=2)
 
         # Details clickable label
         details_label = ctk.CTkLabel(
@@ -1511,7 +1670,7 @@ Developed with Python and CustomTkinter
             text_color="#4CAF50" if has_notes else "#1f538d",  # Green if has notes, blue otherwise
             cursor="hand2"
         )
-        notes_label.grid(row=row_num, column=10, padx=5, pady=2)
+        notes_label.grid(row=row_num, column=9, padx=5, pady=2)
         
         # Add click event and hover effects for Notes
         notes_label.bind("<Button-1>", lambda e, dev=device: self.show_notes_dialog(dev))
@@ -1688,7 +1847,7 @@ Developed with Python and CustomTkinter
             buttons_frame.grid_columnconfigure(i%3, weight=1)
         
         # Results text area
-        result_text = ctk.CTkTextbox(nmap_window, font=ctk.CTkFont(family="Consolas"))
+        result_text = ctk.CTkTextbox(nmap_window, font=ctk.CTkFont(family="Consolas", size=13))
         result_text.pack(pady=20, padx=20, fill="both", expand=True)
     
     def run_nmap(self, ip, args, result_widget):
@@ -2400,6 +2559,7 @@ After installing paramiko, you'll be able to SSH directly from this application.
         self.current_monitor_window = ctk.CTkToplevel(self.root)
         self.current_monitor_window.title("Live Device Monitor")
         self.current_monitor_window.geometry("1000x700")
+        self.current_monitor_window.minsize(1280, 720)  # Set minimum size
         self.current_monitor_window.transient(self.root)
         
         # Handle window close
@@ -2779,6 +2939,308 @@ After installing paramiko, you'll be able to SSH directly from this application.
         )
         close_btn.pack(side="right", padx=5)
     
+    def open_traceroute_choice_dialog(self):
+        """Open choice dialog to select Traceroute or PathPing"""
+        if not TRACEMAP_AVAILABLE:
+            messagebox.showerror("Traceroute Not Available", "Traceroute module is not available.")
+            return
+
+        if not self.selected_devices:
+            messagebox.showwarning("No Devices Selected", "Please select at least one device.")
+            return
+
+        choice_window = ctk.CTkToplevel(self.root)
+        choice_window.title("Select Traceroute or PathPing")
+        choice_window.geometry("350x200")
+        choice_window.transient(self.root)
+        set_dialog_icon(choice_window)
+        choice_window.grab_set()
+
+        # Center the window
+        choice_window.update_idletasks()
+        x = (choice_window.winfo_screenwidth() // 2) - (choice_window.winfo_width() // 2)
+        y = (choice_window.winfo_screenheight() // 2) - (choice_window.winfo_height() // 2)
+        choice_window.geometry(f"+{x}+{y}")
+
+        label = ctk.CTkLabel(choice_window, text="Choose tracing method:", font=ctk.CTkFont(size=14, weight="bold"))
+        label.pack(pady=(20, 10))
+
+        def start_traceroute():
+            choice_window.destroy()
+            self.open_traceroute_dialog()
+
+        def start_pathping():
+            choice_window.destroy()
+            self.open_pathping_dialog()
+
+        btn_frame = ctk.CTkFrame(choice_window)
+        btn_frame.pack(pady=10, padx=20, fill="x")
+
+        traceroute_btn = ctk.CTkButton(btn_frame, text="Traceroute", command=start_traceroute)
+        traceroute_btn.pack(side="left", expand=True, padx=5)
+
+        pathping_btn = ctk.CTkButton(btn_frame, text="PathPing", command=start_pathping)
+        pathping_btn.pack(side="left", expand=True, padx=5)
+
+        # Options button
+        options_button = ctk.CTkButton(btn_frame, text="Options", command=self.show_options_dialog)
+        options_button.pack(side="left", expand=True, padx=5)
+
+    def open_traceroute_dialog(self):
+        if len(self.selected_devices) > 1:
+            self._select_device_then_run(self.tracemap.show_tracemap_dialog, "Traceroute")
+        else:
+            self.tracemap.show_tracemap_dialog(self.selected_devices[0]['ip'])
+
+    def open_pathping_dialog(self):
+        if len(self.selected_devices) > 1:
+            self._select_device_then_run(self.show_pathping_dialog, "PathPing")
+        else:
+            self.show_pathping_dialog(self.selected_devices[0]['ip'])
+
+    def _select_device_then_run(self, func, title):
+        selection_window = ctk.CTkToplevel(self.root)
+        selection_window.title(f"Select Device for {title}")
+        selection_window.geometry("400x300")
+        selection_window.transient(self.root)
+        set_dialog_icon(selection_window)
+        selection_window.grab_set()
+
+        # Center the window
+        selection_window.update_idletasks()
+        x = (selection_window.winfo_screenwidth() // 2) - (selection_window.winfo_width() // 2)
+        y = (selection_window.winfo_screenheight() // 2) - (selection_window.winfo_height() // 2)
+        selection_window.geometry(f"+{x}+{y}")
+
+        ctk.CTkLabel(
+            selection_window,
+            text=f"Multiple devices selected. Choose one for {title}:",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(pady=20)
+
+        list_frame = ctk.CTkScrollableFrame(selection_window)
+        list_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        def select_device(device):
+            selection_window.destroy()
+            func(device['ip'])
+
+        for device in self.selected_devices:
+            device_info = f"{device['ip']} - {device.get('hostname', 'Unknown')}"
+            btn = ctk.CTkButton(
+                list_frame,
+                text=device_info,
+                command=lambda d=device: select_device(d)
+            )
+            btn.pack(fill="x", pady=5)
+
+        cancel_btn = ctk.CTkButton(selection_window, text="Cancel", command=selection_window.destroy)
+        cancel_btn.pack(pady=10)
+
+    def show_options_dialog(self):
+        """Show options for traceroute or pathping commands"""
+        options_window = ctk.CTkToplevel(self.root)
+        options_window.title("Command Options")
+        options_window.geometry("400x300")
+        options_window.transient(self.root)
+        set_dialog_icon(options_window)
+        options_window.grab_set()
+
+        # Center the window
+        options_window.update_idletasks()
+        x = (options_window.winfo_screenwidth() // 2) - (options_window.winfo_width() // 2)
+        y = (options_window.winfo_screenheight() // 2) - (options_window.winfo_height() // 2)
+        options_window.geometry(f"+{x}+{y}")
+
+        # Arguments
+        options = {
+            'max_hops': tk.StringVar(value='30'),
+            'wait_time': tk.StringVar(value='3'),
+            'queries_per_hop': tk.StringVar(value='3'),
+            'ping_interval': tk.StringVar(value='250')
+        }
+
+        ctk.CTkLabel(options_window, text="Max Hops:").pack(anchor="w", padx=20)
+        ctk.CTkEntry(options_window, textvariable=options['max_hops']).pack(fill="x", padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(options_window, text="Wait Time (secs):").pack(anchor="w", padx=20)
+        ctk.CTkEntry(options_window, textvariable=options['wait_time']).pack(fill="x", padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(options_window, text="Queries per Hop:").pack(anchor="w", padx=20)
+        ctk.CTkEntry(options_window, textvariable=options['queries_per_hop']).pack(fill="x", padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(options_window, text="Ping Interval (ms):").pack(anchor="w", padx=20)
+        ctk.CTkEntry(options_window, textvariable=options['ping_interval']).pack(fill="x", padx=20, pady=(0, 10))
+
+        def save_options():
+            self.traceroute_options = options['max_hops'].get(), options['wait_time'].get()
+            self.pathping_options = options['queries_per_hop'].get(), options['ping_interval'].get()
+            options_window.destroy()
+
+        ctk.CTkButton(options_window, text="Save", command=save_options).pack(pady=10)
+
+    def show_pathping_dialog(self, ip):
+        import subprocess
+        import threading
+
+        if hasattr(self, '_pathping_window') and self._pathping_window:
+            try:
+                self._pathping_window.destroy()
+            except:
+                pass
+            self._pathping_window = None
+
+        self._pathping_window = ctk.CTkToplevel(self.root)
+        self._pathping_window.title(f"PathPing - {ip}")
+        self._pathping_window.geometry("700x500")
+        self._pathping_window.transient(self.root)
+        self._pathping_window.grab_set()
+        set_dialog_icon(self._pathping_window)
+
+        # Center the window
+        self._pathping_window.update_idletasks()
+        x = (self._pathping_window.winfo_screenwidth() // 2) - (self._pathping_window.winfo_width() // 2)
+        y = (self._pathping_window.winfo_screenheight() // 2) - (self._pathping_window.winfo_height() // 2)
+        self._pathping_window.geometry(f"+{x}+{y}")
+
+        frame = ctk.CTkFrame(self._pathping_window)
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        label = ctk.CTkLabel(frame, text=f"PathPing results for {ip}", font=ctk.CTkFont(size=16, weight="bold"))
+        label.pack(pady=10)
+
+        result_text = ctk.CTkTextbox(frame, font=ctk.CTkFont(family="Consolas", size=13))
+        result_text.pack(fill="both", expand=True, pady=10)
+
+        progress_bar = ctk.CTkProgressBar(frame)
+        progress_bar.pack(fill="x", pady=(0, 10))
+        progress_bar.set(0)
+
+        stop_flag = {'running': True}
+
+        def run_pathping():
+            try:
+                # Run pathping using TraceMap
+                if hasattr(self, 'pathping_options'):
+                    queries, interval = self.pathping_options
+                else:
+                    queries, interval = 3, 250
+                
+                proc = self.tracemap.run_pathping(ip, queries, interval)
+                if proc is None:
+                    self.safe_window_update(lambda: label.configure(text=f"Error: Failed to start PathPing"))
+                    self.safe_window_update(lambda: result_text.insert("end", "Failed to start PathPing process\n"))
+                    return
+
+                def output_callback(line):
+                    safe_window_update(lambda l=line: result_text.insert("end", l))
+                    safe_window_update(lambda: result_text.see("end"))
+
+                output_lines, return_code = self.tracemap.collect_pathping_output(proc, output_callback, stop_flag)
+                if return_code == 0:
+                    safe_window_update(lambda: label.configure(text=f"PathPing completed for {ip}"))
+                else:
+                    safe_window_update(lambda: label.configure(text=f"PathPing finished with errors"))
+            except Exception as e:
+                safe_window_update(lambda: label.configure(text=f"Error: {str(e)}"))
+                safe_window_update(lambda: result_text.insert("end", f"\n\nError: {str(e)}\n"))
+        
+        def safe_window_update(callback):
+            """Safely update window widgets, handling destroyed windows"""
+            try:
+                if hasattr(self, '_pathping_window') and self._pathping_window and self._pathping_window.winfo_exists():
+                    self._pathping_window.after(0, callback)
+            except (tk.TclError, AttributeError):
+                # Window has been destroyed or is not accessible
+                pass
+
+        def start_pathping():
+            stop_flag['running'] = True
+            start_button.configure(state="disabled")
+            stop_button.configure(state="normal")
+            progress_bar.set(0)
+            result_text.delete("1.0", "end")
+            threading.Thread(target=run_pathping, daemon=True).start()
+
+        def stop_pathping():
+            stop_flag['running'] = False
+            stop_button.configure(state="disabled")
+            start_button.configure(state="normal")
+
+        button_frame = ctk.CTkFrame(frame)
+        button_frame.pack(fill="x", pady=10)
+
+        start_button = ctk.CTkButton(button_frame, text="Start PathPing", command=start_pathping)
+        start_button.pack(side="left", padx=10)
+
+        stop_button = ctk.CTkButton(button_frame, text="Stop PathPing", command=stop_pathping, state="disabled")
+        stop_button.pack(side="left", padx=10)
+
+        close_button = ctk.CTkButton(button_frame, text="Close", command=self._pathping_window.destroy)
+        close_button.pack(side="right", padx=10)
+
+    def open_tracemap_dialog(self):
+        """Open TraceMap dialog for selected devices"""
+        if not TRACEMAP_AVAILABLE:
+            messagebox.showerror("Trace Route Not Available", "Trace Route module is not available.")
+            return
+
+        if not self.selected_devices:
+            messagebox.showwarning("No Devices Selected", "Please select at least one device to trace route.")
+            return
+
+        # If multiple devices selected, let user choose one
+        if len(self.selected_devices) > 1:
+            # Create device selection dialog
+            selection_window = ctk.CTkToplevel(self.root)
+            selection_window.title("Select Device for TraceMap")
+            selection_window.geometry("400x300")
+            selection_window.transient(self.root)
+            set_dialog_icon(selection_window)
+            selection_window.grab_set()
+
+            # Center the window
+            selection_window.update_idletasks()
+            x = (selection_window.winfo_screenwidth() // 2) - (selection_window.winfo_width() // 2)
+            y = (selection_window.winfo_screenheight() // 2) - (selection_window.winfo_height() // 2)
+            selection_window.geometry(f"+{x}+{y}")
+
+            ctk.CTkLabel(
+                selection_window,
+                text="Multiple devices selected. Choose one for TraceMap:",
+                font=ctk.CTkFont(size=14, weight="bold")
+            ).pack(pady=20)
+
+            # Device list frame
+            list_frame = ctk.CTkScrollableFrame(selection_window)
+            list_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+            def select_device(device):
+                selection_window.destroy()
+                self.tracemap.show_tracemap_dialog(device['ip'])
+
+            # Add device buttons
+            for device in self.selected_devices:
+                device_info = f"{device['ip']} - {device.get('hostname', 'Unknown')}"
+                btn = ctk.CTkButton(
+                    list_frame,
+                    text=device_info,
+                    command=lambda d=device: select_device(d)
+                )
+                btn.pack(fill="x", pady=5)
+
+            # Cancel button
+            cancel_btn = ctk.CTkButton(
+                selection_window,
+                text="Cancel",
+                command=selection_window.destroy
+            )
+            cancel_btn.pack(pady=10)
+
+        else:
+            # Single device selected
+            self.tracemap.show_tracemap_dialog(self.selected_devices[0]['ip'])
+
     def show_speedtest_installation_dialog(self):
         """Show speedtest installation instructions"""
         install_window = ctk.CTkToplevel(self.root)
@@ -2938,6 +3400,9 @@ After installing speedtest-cli, you'll be able to run speed tests directly from 
 
     def run(self):
         """Start application"""
+        # Initialize database schema if it doesn't exist
+        setup_database()
+        
         # Initialize the device notes table on startup
         self.init_device_notes_table()
         
